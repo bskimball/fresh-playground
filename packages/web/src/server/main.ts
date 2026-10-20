@@ -1,13 +1,11 @@
 import { createServer } from "node:http"
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { ApiRoutes, Garden } from "@playground/server"
-import { Config, Effect, Layer } from "effect"
+import { Effect, Layer, Logger, References } from "effect"
 import { HttpMiddleware, HttpRouter, HttpServerResponse } from "effect/http"
 import { loadAssets } from "./assets.ts"
 import { PageRoutes } from "./pages.tsx"
-
-const assets = loadAssets()
-const Pages = PageRoutes(assets.pages)
+import { requestLogging, serverConfig } from "./runtime.ts"
 
 // br/gzip for every response the client accepts it for.
 const Compression = HttpRouter.middleware(HttpMiddleware.compression(), { global: true })
@@ -26,18 +24,53 @@ const Revalidation = HttpRouter.middleware(
   { global: true },
 )
 
-// Garden is provided once, so pages and the API share the same in-memory store.
-const App = Layer.mergeAll(ApiRoutes, Pages, assets.routes, Compression, Revalidation).pipe(
-  Layer.provide(Garden.layer),
+const Health = HttpRouter.use(
+  Effect.fn(function* (router) {
+    const garden = yield* Garden
+    yield* router.add(
+      "GET",
+      "/health/live",
+      HttpServerResponse.jsonUnsafe(
+        { status: "alive" },
+        { headers: { "cache-control": "no-store" } },
+      ),
+    )
+    yield* router.add(
+      "GET",
+      "/health/ready",
+      Effect.as(
+        garden.get,
+        HttpServerResponse.jsonUnsafe(
+          { status: "ready" },
+          { headers: { "cache-control": "no-store" } },
+        ),
+      ),
+    )
+  }),
 )
 
-HttpRouter.serve(App).pipe(
-  Layer.provide(
-    NodeHttpServer.layerConfig(createServer, {
-      port: Config.Port("PORT").pipe(Config.withDefault(4321)),
-      host: Config.String("HOST").pipe(Config.withDefault("127.0.0.1")),
-    }),
-  ),
-  Layer.launch,
-  NodeRuntime.runMain,
-)
+Effect.gen(function* () {
+  const config = yield* serverConfig
+  const logger = config.environment === "production" ? Logger.consoleJson : Logger.consolePretty()
+  const server = Effect.gen(function* () {
+    const assets = yield* Effect.sync(loadAssets)
+    // One service instance is shared by pages, API handlers, and readiness checks.
+    const App = Layer.mergeAll(
+      ApiRoutes,
+      PageRoutes(assets.pages),
+      assets.routes,
+      Health,
+      Compression,
+      Revalidation,
+    ).pipe(Layer.provide(Garden.layer))
+
+    yield* HttpRouter.serve(App, { disableLogger: true, middleware: requestLogging }).pipe(
+      Layer.provide(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),
+      Layer.launch,
+    )
+  })
+  yield* server.pipe(
+    Effect.provide(Logger.layer([logger])),
+    Effect.provideService(References.MinimumLogLevel, config.logLevel),
+  )
+}).pipe(NodeRuntime.runMain)

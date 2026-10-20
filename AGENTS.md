@@ -4,7 +4,7 @@
 
 - XState for any relatively complex state.
 - EffectTS everywhere possible.
-- effect-rx for data fetching.
+- `AtomHttpApi` (`effect/reactivity`) with `@effect/atom-react` for data fetching.
 - Vite+ for commands.
 - Astryx components, StyleX styling.
 
@@ -24,4 +24,4 @@
 
 ## Formatting
 
-Follow `biome.json` and `.editorconfig`.
+Follow the `fmt` and `lint` config in the root `vite.config.ts` (Oxfmt, Oxlint) and `.editorconfig`.

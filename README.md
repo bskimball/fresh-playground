@@ -12,17 +12,63 @@ only as the bundler.
 
 ## Run
 
+Commands go through [Vite+](https://viteplus.dev) (`vite-plus` 1.3.0, a local
+dependency; no global install needed). Run them with `npm exec -- vp`:
+
 ```sh
-npm install
-npm run dev     # rebuild on change and restart the server, http://127.0.0.1:4321
+npm exec --package=vite-plus@1.3.0 -- vp install
+npm exec -- vp run dev      # rebuild on change and restart the server, http://127.0.0.1:4321
 ```
 
 ```sh
-npm run check   # Biome (lint + format check) and tsc in every package
-npm run format  # Biome: format, organize imports and apply safe lint fixes
-npm run build   # production build into packages/web/dist
-npm run start   # serve the build on http://127.0.0.1:4321 (PORT and HOST override)
+npm exec -- vp run check    # vp check (Oxlint + Oxfmt check), then tsc in every package
+npm exec -- vp run format   # vp fmt: format with Oxfmt
+npm exec -- vp run build    # production build into packages/web/dist
+npm exec -- vp run start    # serve the build (see Configuration)
 ```
+
+If `vp` is installed on your `PATH`, `vp install` and `vp run dev` work
+directly. `npm run <script>` also works for each script above.
+
+`vp dev` is not this app's server. The root `dev`, `build` and `start` scripts
+run the `packages/web` scripts through `vp`, so the Effect server keeps serving
+the app; Vite only bundles. `vp lint` runs Oxlint on its own.
+
+## Configuration
+
+The server reads these variables in `packages/web/src/server/runtime.ts`;
+`main.ts` applies them. `.env.example` lists them.
+
+| Variable    | Values                                                     | Default       |
+| ----------- | ---------------------------------------------------------- | ------------- |
+| `NODE_ENV`  | `development`, `test`, `production`                        | `development` |
+| `HOST`      | any nonempty host                                          | loopback      |
+| `PORT`      | validated port number                                      | `4321`        |
+| `LOG_LEVEL` | `Trace`, `Debug`, `Info`, `Warn`, `Error`, `Fatal`, `None` | `Info`        |
+
+The `packages/web` scripts load an optional workspace-root `.env` with Node's
+`--env-file-if-exists=../../.env`. Variables already set in the shell win over
+the file. Effect treats empty values as absent and applies the defaults; invalid
+nonempty values fail startup.
+
+## Operations
+
+- **Logging.** Effect loggers emit JSON in production and pretty output otherwise.
+  Request logs contain method, path (no query string), status and the `http.span`
+  duration; 5xx responses use error severity. Each request gets a generated
+  `requestId`, added to log annotations and returned in `x-request-id`.
+- **Errors.** An unexpected 5xx response is sanitized to
+  `{"error":"Internal server error","requestId":"…"}`. Typed expected errors,
+  such as the 409 `GardenSaturated`, pass through unchanged.
+- **Log content.** Request logs use explicit metadata rather than raw HTTP causes,
+  which can contain sensitive URLs and payloads. They omit query strings, bodies,
+  headers, and raw exception details. Keep secrets out of URL paths and any
+  application-authored log messages. Hosted error reporting is not configured.
+- **Health.** `GET /health/live` is a liveness check. `GET /health/ready`
+  reads the shared `Garden` service. There is no database yet.
+- **Shutdown.** `NodeRuntime` owns process signals and shutdown.
+- **Not implemented.** Persistence (the garden is in-memory), authentication
+  and deployment.
 
 ## Layout
 
@@ -81,19 +127,22 @@ browser          src/client/garden.tsx ──► hydrateRoot(TerrariumIsland)
 - **Effect ↔ XState.** `fromEffect` turns an Effect into XState actor logic.
   Leaving a state aborts the actor's signal, which interrupts the fiber and the
   underlying `fetch`. Expected failures reach `onError` as typed values.
-- **Effect atoms.** `ApiClient` is an `AtomHttpApi.Service`, so
-  `ApiClient.query("garden", "get", {})` is a reactive atom of
-  `AsyncResult`. See `LiveStatusIsland`.
-- **Tooling.** TypeScript 7 and Vite 8 (Rolldown). Biome lints and formats
-  the whole repo (2 spaces, double quotes, no semicolons, 100 columns);
-  `biome.json` is the config and `.editorconfig` carries the same basics.
+- **Reactive fetching.** `ApiClient` is an `AtomHttpApi.Service` (from
+  `effect/reactivity`), so `ApiClient.query("garden", "get", {})` is a reactive
+  atom of `AsyncResult`. React reads atoms through `@effect/atom-react`. See
+  `LiveStatusIsland`. XState actors reach the API through the existing
+  `ManagedRuntime` bridge (`fromEffect`).
+- **Tooling.** TypeScript 7, Vite 8 (Rolldown) and Vite+. The root
+  `vite.config.ts` configures `lint` (Oxlint) and `fmt` (Oxfmt) for the whole
+  repo; `.editorconfig` carries the basic whitespace settings. The bundler
+  config stays in `packages/web/vite.config.ts`, which imports `vite-plus`.
 - **Astryx.** `@astryxdesign/core` and `@astryxdesign/theme-neutral` use the
   `^0.7.1` beta series. The UI uses `Button`, `IconButton`, `Slider` and `Card`
   with the prebuilt neutral light theme. `AppTheme` wraps the document and
   each independently rendered island, keeping theme context identical for
   server rendering and hydration. `Document.tsx` loads Figtree and Fraunces
   through Google Fonts. No Astryx CLI or build plugin is required.
-- **Build.** `vite build --app` builds the server bundle and the client
+- **Build.** `vp build --app` builds the server bundle and the client
   bundle. The garden client entry imports `global.css`, which imports the
   Astryx reset, core and neutral-theme CSS. With `cssCodeSplit: false`, Vite
   emits shared CSS under the `style.css` manifest key. The server bundle's

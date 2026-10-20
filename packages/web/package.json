@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite build --app && (vite build --app --watch & node --watch-path=dist dist/server/main.js)",
-    "build": "vite build --app",
-    "start": "node dist/server/main.js",
-    "check": "tsc --noEmit"
+    "dev": "vp build --app && (vp build --app --watch & node --env-file-if-exists=../../.env --watch-path=dist dist/server/main.js)",
+    "build": "vp build --app",
+    "start": "node --env-file-if-exists=../../.env dist/server/main.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.7.1",
@@ -32,6 +32,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "babel-plugin-react-compiler": "^1.0.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4"
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.3.0",
+    "vite-plus": "1.3.0"
   }
 }

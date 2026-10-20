@@ -18,17 +18,15 @@ const GardenHandlers = HttpApiBuilder.group(
   }),
 )
 
-const SystemHandlers = HttpApiBuilder.group(
-  AppApi,
-  "system",
-  Effect.fn(function* (handlers) {
-    return handlers.handleAll({
+const SystemHandlers = HttpApiBuilder.group(AppApi, "system", (handlers) =>
+  Effect.succeed(
+    handlers.handleAll({
       hello: () =>
         Clock.currentTimeMillis.pipe(
           Effect.map((now) => ({ message: "Hello from Effect!", time: new Date(now) })),
         ),
-    })
-  }),
+    }),
+  ),
 )
 
 /**
