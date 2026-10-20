@@ -1,0 +1,37 @@
+{
+  "name": "@playground/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --app && (vite build --app --watch & node --watch-path=dist dist/server/main.js)",
+    "build": "vite build --app",
+    "start": "node dist/server/main.js",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@astryxdesign/core": "^0.7.1",
+    "@astryxdesign/theme-neutral": "^0.7.1",
+    "@effect/atom-react": "^4.0.5",
+    "@effect/platform-node": "^4.0.5",
+    "@playground/contract": "*",
+    "@playground/server": "*",
+    "@stylexjs/stylex": "^0.19.1",
+    "@xstate/react": "^6.1.0",
+    "effect": "^4.0.5",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "xstate": "^5.33.3"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.7",
+    "@rolldown/plugin-babel": "^0.2.4",
+    "@stylexjs/unplugin": "^0.19.1",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
+}

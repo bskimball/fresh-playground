@@ -1,0 +1,36 @@
+@layer reset, astryx-base, astryx-theme;
+@import "@astryxdesign/core/reset.css";
+@import "@astryxdesign/core/astryx.css";
+@import "@astryxdesign/theme-neutral/theme.css";
+
+/* Keep document defaults below Astryx component and theme layers. */
+@layer reset {
+  :where(:root) {
+    font-family: var(--font-family-sans, "Figtree", sans-serif);
+    color: var(--color-text-primary);
+    background: var(--color-background-body);
+    line-height: 1.5;
+    font-synthesis: none;
+  }
+  :where(button, input, a) {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  :where(a) {
+    color: inherit;
+  }
+  :where(:focus-visible) {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 5px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component motion */
+    animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component motion */
+    transition: none !important;
+  }
+}
