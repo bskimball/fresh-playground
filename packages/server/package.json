@@ -11,7 +11,8 @@
   "dependencies": {
     "@playground/contract": "*",
     "better-auth": "^1.7.12",
-    "effect": "^4.0.5"
+    "effect": "^4.0.5",
+    "nodemailer": "^10.2.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

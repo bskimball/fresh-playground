@@ -25,3 +25,10 @@
 ## Formatting
 
 Follow the `fmt` and `lint` config in the root `vite.config.ts` (Oxfmt, Oxlint) and `.editorconfig`.
+
+## Task guides
+
+- Add routes, islands, contracts, services, or admin panels: use [.agents/skills/add-feature/SKILL.md](.agents/skills/add-feature/SKILL.md), with [docs/development.md](docs/development.md) as the canonical recipe.
+- Verify a change or prepare release evidence: use [.agents/skills/verify-change/SKILL.md](.agents/skills/verify-change/SKILL.md).
+- Change persistence, auth, or offline behavior: read [docs/architecture.md](docs/architecture.md). Configure production, SMTP, backups, or rollback: read [docs/deployment.md](docs/deployment.md).
+- Rename/remove demos: read [docs/getting-started.md](docs/getting-started.md). Prepare publication/versioning: read [docs/releases.md](docs/releases.md), including the unresolved artwork-rights prerequisite.

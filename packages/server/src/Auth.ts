@@ -123,9 +123,17 @@ export class Auth extends Context.Service<
       }
       const methods: SignInMethods = {
         password: config.password,
-        // Off by default in production until a real Mailer replaces the log transport.
+        // Production email sign-in is opt-in even when SMTP is configured.
         magicLink: Option.getOrElse(config.magicLink, () => config.environment !== "production"),
         social,
+      }
+
+      if (methods.magicLink && mailer.transport === "disabled") {
+        return yield* Effect.die(
+          new Error(
+            "AUTH_MAGIC_LINK=true requires MAIL_TRANSPORT=smtp (or log outside production)",
+          ),
+        )
       }
 
       const database = yield* Sqlite

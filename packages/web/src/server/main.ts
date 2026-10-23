@@ -80,7 +80,7 @@ Effect.gen(function* () {
     const Services = Layer.mergeAll(
       Garden.layer,
       Kanban.layer,
-      Auth.layer.pipe(Layer.provide(Mailer.log)),
+      Auth.layer.pipe(Layer.provide(Mailer.layer)),
     ).pipe(Layer.provide(Sqlite.layer))
 
     const App = Layer.mergeAll(

@@ -1,0 +1,61 @@
+name: Verify template
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+      - name: Frozen install
+        run: npm exec --package=vite-plus@1.3.0 -- vp install --frozen-lockfile
+      - name: Check
+        run: npm exec -- vp run check
+      - name: Test
+        run: npm exec -- vp run test
+      - name: Build
+        run: npm exec -- vp run build
+      - name: Check release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: node --input-type=module -e 'import p from "./package.json" with {type:"json"}; if (process.env.GITHUB_REF_NAME !== `v${p.version}`) throw new Error("Tag must match root package.json version")'
+      - name: Production startup smoke
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          NODE_ENV: production
+          HOST: 127.0.0.1
+          PORT: "4321"
+          BETTER_AUTH_URL: http://127.0.0.1:4321
+          BETTER_AUTH_SECRET: ci-only-secret-not-for-any-deployment-123456
+          DATABASE_PATH: ${{ runner.temp }}/template-smoke.db
+          MAIL_TRANSPORT: disabled
+          AUTH_MAGIC_LINK: "false"
+        run: |
+          cd packages/web
+          node dist/server/main.js > "$RUNNER_TEMP/template-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4321/health/ready; then break; fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then cat "$RUNNER_TEMP/template-server.log"; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4321/health/live
+          curl --fail --silent http://127.0.0.1:4321/health/ready
+          curl --fail --silent http://127.0.0.1:4321/login > /dev/null
