@@ -11,16 +11,12 @@ export function mountTerrarium(
   let disposed = false
   let state = initialState
   let renderer: Renderer | undefined
-  const threeUrl = "https://esm.sh/three@0.180.0"
-  const controlsUrl = "https://esm.sh/three@0.180.0/examples/jsm/controls/OrbitControls.js"
-  const environmentUrl = "https://esm.sh/three@0.180.0/examples/jsm/environments/RoomEnvironment.js"
-
   onStatus("loading")
   Promise.all([
     import("./terrarium-scene.js"),
-    import(/* @vite-ignore */ threeUrl),
-    import(/* @vite-ignore */ controlsUrl),
-    import(/* @vite-ignore */ environmentUrl),
+    import("three"),
+    import("three/examples/jsm/controls/OrbitControls.js"),
+    import("three/examples/jsm/environments/RoomEnvironment.js"),
   ])
     .then(([module, THREE, { OrbitControls }, { RoomEnvironment }]) => {
       if (disposed) return

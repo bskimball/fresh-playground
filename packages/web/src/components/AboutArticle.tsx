@@ -56,9 +56,9 @@ const styles = stylex.create({
     paddingBlock: 12,
     borderTopWidth: 1,
     borderTopStyle: "solid",
-    borderTopColor: "#eeebdc",
+    borderTopColor: "light-dark(#eeebdc, #454e3d)",
     fontSize: 14,
-    color: "#7f8579",
+    color: "light-dark(#7f8579, #b9c1ae)",
   },
   name: { color: colors.ink, fontWeight: 600 },
 })

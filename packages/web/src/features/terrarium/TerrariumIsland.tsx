@@ -5,11 +5,14 @@ import { Slider } from "@astryxdesign/core/Slider"
 import { type Garden, SATURATED_AT } from "@playground/contract"
 import * as stylex from "@stylexjs/stylex"
 import { useActorRef, useSelector } from "@xstate/react"
+import { useEffect } from "react"
 import { AppTheme } from "../../components/AppTheme.tsx"
 import { Icon } from "../../components/Icon.tsx"
 import { text } from "../../styles/text.ts"
 import { colors, fonts, media } from "../../styles/tokens.stylex.ts"
 import { careMachine } from "./care.machine.ts"
+import { watchFreshness } from "./freshness.ts"
+import { loadOfflineSnapshot, watchOfflineSnapshots } from "./offline.ts"
 import { TerrariumScene } from "./TerrariumScene.tsx"
 
 const moistureNote = (moisture: number) =>
@@ -26,21 +29,43 @@ const sunlightNote = (sunlight: number, night: boolean) => {
   return "Just the right amount of golden light."
 }
 
-const saveStatus = {
-  saved: "",
-  pending: "Saving…",
-  saving: "Saving…",
-  unsaved: "Couldn’t save. Your next change will try again.",
-} as const
+const formatSyncStatus = (
+  settings: "saved" | "pending" | "saving" | "unsaved",
+  watering: "idle" | "pouring" | "queued" | "syncing",
+) => {
+  if (watering === "syncing" || settings === "pending" || settings === "saving") return "Saving…"
+  if (watering === "queued" || settings === "unsaved") {
+    return "Saved offline. Will sync when back online."
+  }
+  return ""
+}
 
 /** Hydrated island. The server seeds it with the garden it just loaded. */
 export default function TerrariumIsland({ garden: initial }: { garden: Garden }) {
   const care = useActorRef(careMachine, { input: { garden: initial } })
+  useEffect(() => {
+    const offline = loadOfflineSnapshot()
+    if (offline) care.send({ type: "RESTORE_OFFLINE", snapshot: offline })
+    const stopOffline = watchOfflineSnapshots((next) => {
+      if (next) {
+        care.send({ type: "RESTORE_OFFLINE", snapshot: next })
+      } else {
+        care.send({ type: "CLEAR_OFFLINE" })
+        care.send({ type: "REVALIDATE" })
+      }
+    })
+    const stopFreshness = watchFreshness(() => care.send({ type: "REVALIDATE" }))
+    return () => {
+      stopOffline()
+      stopFreshness()
+    }
+  }, [care])
   const garden = useSelector(care, (s) => s.context.garden)
   const sunlight = useSelector(care, (s) => s.context.sunlight)
   const night = useSelector(care, (s) => s.context.night)
   const message = useSelector(care, (s) => s.context.message)
-  const pouring = useSelector(care, (s) => s.matches({ watering: "pouring" }))
+  const watering = useSelector(care, (s) => s.value.watering)
+  const pouring = watering === "pouring"
   const settings = useSelector(care, (s) => s.value.settings)
 
   const saturated = garden.moisture >= SATURATED_AT
@@ -148,7 +173,7 @@ export default function TerrariumIsland({ garden: initial }: { garden: Garden })
             isLoading={pouring}
           />
           <p {...stylex.props(styles.saveStatus)} role="status">
-            {saveStatus[settings]}
+            {formatSyncStatus(settings, watering)}
           </p>
 
           <div {...stylex.props(styles.note)}>
@@ -202,19 +227,21 @@ const styles = stylex.create({
     overflow: "hidden",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "#e0e5d5",
+    borderColor: "light-dark(#e0e5d5, #4c5942)",
     borderRadius: 24,
-    backgroundImage: "radial-gradient(ellipse at 50% 37%, #f9fbed 0%, #eef2e2 55%, #e9efdf 100%)",
+    backgroundImage:
+      "radial-gradient(ellipse at 50% 37%, light-dark(#f9fbed, #414e36) 0%, light-dark(#eef2e2, #303b2b) 55%, light-dark(#e9efdf, #283324) 100%)",
     minHeight: { default: 650, [media.tablet]: 620, [media.mobile]: 600, [media.tiny]: 550 },
     display: "flex",
     flexDirection: "column",
     transition: "background 0.7s, color 0.7s",
   },
   stageNight: {
-    backgroundImage: "radial-gradient(ellipse at 50% 40%, #536477, #344757)",
-    color: "#eef1d9",
+    backgroundImage:
+      "radial-gradient(ellipse at 50% 40%, light-dark(#536477, #283c4d), light-dark(#344757, #192a37))",
+    color: "light-dark(#eef1d9, #eef1d9)",
   },
-  dimNight: { color: "#bdcabb" },
+  dimNight: { color: "light-dark(#bdcabb, #c3d2c6)" },
   stageTop: {
     position: "relative",
     zIndex: 2,
@@ -231,14 +258,14 @@ const styles = stylex.create({
     fontSize: 9,
     fontWeight: 600,
     letterSpacing: 1.4,
-    color: "#758768",
+    color: "light-dark(#758768, #c0d2a9)",
   },
   liveDot: {
     width: 6,
     height: 6,
-    backgroundColor: "#91aa75",
+    backgroundColor: "light-dark(#91aa75, #adc68d)",
     borderRadius: "50%",
-    boxShadow: "0 0 0 4px #91aa7517",
+    boxShadow: "0 0 0 4px light-dark(#91aa7517, #adc68d25)",
   },
   caption: {
     textAlign: "center",
@@ -258,7 +285,7 @@ const styles = stylex.create({
   },
   captionText: {
     fontSize: 12,
-    color: "#879177",
+    color: "light-dark(#879177, #c2ccb5)",
     margin: 0,
     minHeight: 18,
   },
@@ -268,13 +295,16 @@ const styles = stylex.create({
     justifyContent: "space-between",
     borderTopWidth: 1,
     borderTopStyle: "solid",
-    borderTopColor: "#dce3cf",
+    borderTopColor: "light-dark(#dce3cf, #4c5942)",
     paddingBlock: { default: 16, [media.tablet]: 15 },
     paddingInline: { default: 25, [media.tablet]: 15 },
     fontSize: 10,
-    color: "#8b967d",
+    color: "light-dark(#8b967d, #bdcbb0)",
   },
-  stageFooterNight: { borderTopColor: "#ffffff18", color: "#bdcabb" },
+  stageFooterNight: {
+    borderTopColor: "light-dark(#ffffff18, #ffffff18)",
+    color: "light-dark(#bdcabb, #c3d2c6)",
+  },
   footerItem: { display: "flex", alignItems: "center", gap: 7 },
   footerAside: {
     fontSize: 9,
@@ -300,7 +330,7 @@ const styles = stylex.create({
   },
   panelText: {
     fontSize: 11,
-    color: "#92958a",
+    color: "light-dark(#92958a, #b9c1ae)",
     marginTop: 0,
     marginInline: 0,
     marginBottom: { default: 29, [media.mobile]: 23 },
@@ -315,7 +345,7 @@ const styles = stylex.create({
     marginBottom: 13,
   },
   statLabel: { display: "flex", alignItems: "center", gap: 9 },
-  statValue: { fontSize: 11, fontWeight: 500, color: "#8b927f" },
+  statValue: { fontSize: 11, fontWeight: 500, color: "light-dark(#8b927f, #c5ceb9)" },
   statIcon: {
     width: 31,
     height: 31,
@@ -323,8 +353,14 @@ const styles = stylex.create({
     placeItems: "center",
     borderRadius: 10,
   },
-  waterIcon: { backgroundColor: "#e9f1ef", color: "#80a9aa" },
-  sunIcon: { backgroundColor: "#faf0da", color: "#c5a55e" },
+  waterIcon: {
+    backgroundColor: "light-dark(#e9f1ef, #304443)",
+    color: "light-dark(#80a9aa, #a9d3cf)",
+  },
+  sunIcon: {
+    backgroundColor: "light-dark(#faf0da, #493f2c)",
+    color: "light-dark(#c5a55e, #dfc17d)",
+  },
   statNote: {
     color: colors.faint,
     fontSize: { default: 10, [media.mobile]: 12 },
@@ -339,14 +375,14 @@ const styles = stylex.create({
     borderWidth: 0,
     borderRadius: 10,
     overflow: "hidden",
-    backgroundColor: "#eef0e8",
-    "::-webkit-progress-bar": { backgroundColor: "#eef0e8" },
+    backgroundColor: "light-dark(#eef0e8, #414b38)",
+    "::-webkit-progress-bar": { backgroundColor: "light-dark(#eef0e8, #414b38)" },
     "::-webkit-progress-value": {
-      backgroundColor: "#9abbb4",
+      backgroundColor: "light-dark(#9abbb4, #91bcb0)",
       borderRadius: 10,
       transition: "width 0.5s",
     },
-    "::-moz-progress-bar": { backgroundColor: "#9abbb4" },
+    "::-moz-progress-bar": { backgroundColor: "light-dark(#9abbb4, #91bcb0)" },
   },
   saveStatus: {
     minHeight: 15,
@@ -359,19 +395,19 @@ const styles = stylex.create({
   note: {
     display: "flex",
     gap: 12,
-    backgroundColor: "#f4f2e8",
+    backgroundColor: "light-dark(#f4f2e8, #34382a)",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "#eeebdc",
+    borderColor: "light-dark(#eeebdc, #454e3d)",
     borderRadius: 13,
     paddingBlock: 17,
     paddingInline: 15,
     marginBlock: 16,
-    color: "#a9a47d",
+    color: "light-dark(#a9a47d, #d3c591)",
   },
   noteIcon: { flexShrink: 0, marginTop: 2 },
   noteTitle: {
-    color: "#7e846a",
+    color: "light-dark(#7e846a, #d2d9b6)",
     fontFamily: fonts.serif,
     fontWeight: 500,
     fontSize: 15,
@@ -379,7 +415,7 @@ const styles = stylex.create({
   noteText: {
     fontSize: { default: 10, [media.mobile]: 12 },
     lineHeight: 1.8,
-    color: "#959783",
+    color: "light-dark(#959783, #c3c9ae)",
     marginTop: 6,
     marginBottom: 0,
   },
@@ -396,14 +432,14 @@ const styles = stylex.create({
   journalLink: {
     fontSize: 8,
     letterSpacing: 1,
-    color: { default: "#a4a896", ":hover": colors.ink },
+    color: { default: "light-dark(#a4a896, #bbc6aa)", ":hover": colors.ink },
   },
   journalList: { listStyle: "none", padding: 0, margin: 0 },
   journalItem: {
     display: "flex",
     alignItems: "baseline",
     gap: 8,
-    color: "#969d8b",
+    color: "light-dark(#969d8b, #b9c1ae)",
     fontSize: { default: 10, [media.mobile]: 12 },
     marginBlock: 10,
     lineHeight: 1.6,
@@ -412,7 +448,7 @@ const styles = stylex.create({
     width: 4,
     height: 4,
     borderRadius: "50%",
-    backgroundColor: "#b0ba9c",
+    backgroundColor: "light-dark(#b0ba9c, #9ead88)",
     flexShrink: 0,
   },
 })

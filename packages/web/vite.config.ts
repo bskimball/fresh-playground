@@ -17,7 +17,14 @@ export default defineConfig({
         manifest: true,
         cssCodeSplit: false,
         rolldownOptions: {
-          input: ["src/client/garden.tsx", "src/client/about.ts"],
+          input: [
+            "src/client/garden.tsx",
+            "src/client/about.ts",
+            "src/client/login.tsx",
+            "src/client/admin.tsx",
+            "src/client/performance.ts",
+            "src/client/sw.ts",
+          ],
         },
       },
     },

@@ -8,8 +8,16 @@ import { AtomHttpApi } from "effect/reactivity"
 // origin is only needed in the browser.
 const baseUrl = globalThis.location?.origin
 
-const transformClient = (client: HttpClient.HttpClient) =>
-  client.pipe(HttpClient.retryTransient({ schedule: Schedule.exponential(200), times: 2 }))
+const transformClient = (client: HttpClient.HttpClient) => {
+  const reads = client.pipe(
+    HttpClient.retryTransient({ schedule: Schedule.exponential(200), times: 2 }),
+  )
+  return client.pipe(
+    HttpClient.transform((response, request) =>
+      request.method === "GET" || request.method === "HEAD" ? reads.execute(request) : response,
+    ),
+  )
+}
 
 /**
  * Typed client for `AppApi`. Use it as an Effect service, or through

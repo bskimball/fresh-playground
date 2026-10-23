@@ -7,12 +7,12 @@ export const colors = stylex.defineVars({
   line: "var(--color-border)",
   muted: "var(--color-text-secondary)",
   faint: "var(--color-text-secondary)",
-  sage: "#899579",
-  moss: "#75875f",
-  mossDark: "#61754c",
-  olive: "#8b9a69",
-  mist: "#e3e9d9",
-  focus: "#a66b3e",
+  sage: "light-dark(#899579, #a9b99a)",
+  moss: "light-dark(#75875f, #a4ba88)",
+  mossDark: "light-dark(#61754c, #b4c99a)",
+  olive: "light-dark(#8b9a69, #bbc99b)",
+  mist: "light-dark(#e3e9d9, #394431)",
+  focus: "light-dark(#a66b3e, #d6a477)",
 })
 
 export const fonts = stylex.defineVars({

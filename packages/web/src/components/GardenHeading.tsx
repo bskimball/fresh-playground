@@ -41,11 +41,11 @@ const styles = stylex.create({
     marginInline: 0,
     marginBottom: 18,
   },
-  emphasis: { fontWeight: 400, color: "#8b9a69" },
+  emphasis: { fontWeight: 400, color: "light-dark(#8b9a69, #bbc99b)" },
   intro: {
     fontSize: { default: 14, [media.mobile]: 12 },
     lineHeight: 1.8,
-    color: "#7f8579",
+    color: "light-dark(#7f8579, #b9c1ae)",
     margin: 0,
   },
   stamp: {
@@ -53,7 +53,7 @@ const styles = stylex.create({
     flexDirection: "column",
     alignItems: "center",
     gap: 7,
-    color: "#919771",
+    color: "light-dark(#919771, #b9c5a0)",
     fontSize: 12,
     paddingTop: 25,
     paddingLeft: 32,
@@ -64,6 +64,6 @@ const styles = stylex.create({
     fontFamily: fonts.serif,
     fontSize: 16,
     fontWeight: 400,
-    color: "#6b795b",
+    color: "light-dark(#6b795b, #b4c99a)",
   },
 })

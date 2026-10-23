@@ -6,15 +6,14 @@ import { colors, media } from "../styles/tokens.stylex.ts"
 
 const timeFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" })
 
-/** Server-rendered with zero client JavaScript. */
+/** Journal content stays server-rendered; only the shared header toggle hydrates. */
 export function JournalTimeline({ entries }: { entries: ReadonlyArray<JournalEntry> }) {
   return (
     <Card xstyle={styles.page}>
       <p {...stylex.props(text.eyebrow)}>THE GARDEN REMEMBERS</p>
       <h1 {...stylex.props(text.serif, styles.title)}>Little moments</h1>
       <p {...stylex.props(styles.intro)}>
-        Every drink and every goodnight, newest first. This page is rendered on the server and ships
-        no JavaScript.
+        Every drink and every goodnight, newest first. Your garden’s little moments, gathered here.
       </p>
       <ol {...stylex.props(styles.list)}>
         {entries.map((entry) => (
@@ -48,7 +47,7 @@ const styles = stylex.create({
   intro: {
     fontSize: 13,
     lineHeight: 1.8,
-    color: "#7f8579",
+    color: "light-dark(#7f8579, #b9c1ae)",
     marginTop: 0,
     marginBottom: 28,
   },
@@ -61,7 +60,7 @@ const styles = stylex.create({
     paddingBlock: 12,
     borderTopWidth: 1,
     borderTopStyle: "solid",
-    borderTopColor: "#eeebdc",
+    borderTopColor: "light-dark(#eeebdc, #454e3d)",
     fontSize: 14,
     color: colors.ink,
   },
@@ -69,7 +68,7 @@ const styles = stylex.create({
     width: 6,
     height: 6,
     borderRadius: "50%",
-    backgroundColor: "#b0ba9c",
+    backgroundColor: "light-dark(#b0ba9c, #9ead88)",
     transform: "translateY(-2px)",
   },
   time: { fontSize: 11, color: colors.faint, whiteSpace: "nowrap" },

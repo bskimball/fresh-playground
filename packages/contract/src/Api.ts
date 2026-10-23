@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
+import { AdminApi } from "./Admin.ts"
 import { GardenApi } from "./Garden.ts"
 
 export const Hello = Schema.Struct({
@@ -11,4 +12,4 @@ export class SystemApi extends HttpApiGroup.make("system", { topLevel: true }).a
   HttpApiEndpoint.get("hello", "/api/hello", { success: Hello }),
 ) {}
 
-export class AppApi extends HttpApi.make("app").add(GardenApi).add(SystemApi) {}
+export class AppApi extends HttpApi.make("app").add(GardenApi).add(AdminApi).add(SystemApi) {}

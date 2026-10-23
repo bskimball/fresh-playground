@@ -1,16 +1,24 @@
-// Observe the island's own box: Astryx's Theme child uses display: contents
-// and cannot be an IntersectionObserver target.
+import "vite/modulepreload-polyfill"
+
 const root = document.querySelector<HTMLElement>("[data-island=live-status]")
 if (root) {
-  const observer = new IntersectionObserver(async (entries) => {
+  const observer = new IntersectionObserver((entries) => {
     if (!entries.some((entry) => entry.isIntersecting)) return
     observer.disconnect()
-    const [{ createElement }, { hydrateRoot }, { default: LiveStatusIsland }] = await Promise.all([
+    void Promise.all([
       import("react"),
-      import("react-dom/client"),
+      import("./hydrateIsland.ts"),
       import("../islands/LiveStatusIsland.tsx"),
     ])
-    hydrateRoot(root, createElement(LiveStatusIsland))
+      .then(([{ createElement }, { hydrateIsland }, { default: LiveStatusIsland }]) => {
+        hydrateIsland(root, createElement(LiveStatusIsland))
+      })
+      .catch((error: unknown) => {
+        console.error("Status loading failed", error)
+        root.removeAttribute("aria-busy")
+        const status = document.querySelector<HTMLElement>("[data-island-status=live-status]")
+        if (status) status.textContent = "Live status could not load. Reload the page to try again."
+      })
   })
   observer.observe(root)
 }

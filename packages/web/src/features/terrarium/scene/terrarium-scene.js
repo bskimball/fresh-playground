@@ -18,7 +18,7 @@ export function createTerrarium(
   const v = (x, y, z) => new THREE.Vector3(x, y, z)
   const scene = new THREE.Scene()
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(Math.max(devicePixelRatio, 2), 3))
   renderer.setClearColor(0x000000, 0)
   renderer.outputColorSpace = THREE.SRGBColorSpace
   // Neutral tone mapping keeps the pastel palette from washing out.
@@ -77,15 +77,24 @@ export function createTerrarium(
   scene.add(garden)
   const clay = (color, extra = {}) =>
     new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0, ...extra })
-  const moss = (color) => clay(color, { roughness: 1, envMapIntensity: 0.7 })
+  const moss = (color) =>
+    new THREE.MeshPhysicalMaterial({
+      color,
+      roughness: 1,
+      metalness: 0,
+      envMapIntensity: 0.45,
+      sheen: 0.18,
+      sheenRoughness: 1,
+      sheenColor: 0x9cc76a,
+    })
   const materials = {
-    soil: clay(0x58331f, { roughness: 1 }),
-    stone: clay(0xa48ddb, { flatShading: true, roughness: 0.7 }),
+    soil: clay(0x78503c, { roughness: 1 }),
+    stone: clay(0xb09ad9, { roughness: 0.92 }),
     cap: clay(0xf27f6f, { roughness: 0.7 }),
     spot: clay(0xfcd6ca, { roughness: 0.75 }),
     stalk: clay(0xf6cdb8),
     gills: clay(0xf3c3ad),
-    moss: [moss(0x4f9142), moss(0x47873c), moss(0x5a9c48)],
+    moss: [moss(0x5b934f), moss(0x508657), moss(0x6faa55)],
   }
 
   function mesh(geometry, material, parent = garden) {
@@ -118,19 +127,21 @@ export function createTerrarium(
     return bowlPoints.at(-1).x
   }
 
-  // Fresnel glass: nearly clear face-on, glowing aqua toward the silhouette.
+  // Milky aqua glass: clear enough over foliage, hazier at the base and silhouette.
   const glass = (side, baseAlpha, rimAlpha) =>
     new THREE.ShaderMaterial({
       uniforms: {
-        inner: { value: new THREE.Color(0xe3fbf6) },
-        edge: { value: new THREE.Color(0x7fd5d1) },
+        inner: { value: new THREE.Color(0xb9e9e3) },
+        edge: { value: new THREE.Color(0x99e1de) },
         baseAlpha: { value: baseAlpha },
         rimAlpha: { value: rimAlpha },
       },
       vertexShader: /* glsl */ `
         varying vec3 vNormal;
         varying vec3 vView;
+        varying float vHeight;
         void main() {
+          vHeight = position.y;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           vNormal = normalize(normalMatrix * normal);
           vView = normalize(-mv.xyz);
@@ -143,15 +154,18 @@ export function createTerrarium(
         uniform float rimAlpha;
         varying vec3 vNormal;
         varying vec3 vView;
+        varying float vHeight;
         void main() {
           vec3 n = normalize(vNormal);
           if (!gl_FrontFacing) n = -n;
           float facing = clamp(abs(dot(n, normalize(vView))), 0.0, 1.0);
-          float fresnel = pow(1.0 - facing, 3.2);
+          float fresnel = pow(1.0 - facing, 1.65);
+          float lowerHaze = 1.0 - smoothstep(0.1, 1.45, vHeight);
+          float innerGlow = exp(-pow((facing - 0.22) / 0.2, 2.0)) * 0.12;
           vec3 h = normalize(normalize(vec3(-0.45, 0.65, 0.6)) + normalize(vView));
-          float spec = pow(max(dot(n, h), 0.0), 140.0) * 0.35;
-          vec3 color = mix(inner, edge, fresnel) + spec;
-          gl_FragColor = vec4(color, clamp(baseAlpha + fresnel * rimAlpha + spec, 0.0, 1.0));
+          float spec = pow(max(dot(n, h), 0.0), 38.0) * 0.22;
+          vec3 color = mix(inner, edge, fresnel) + spec + innerGlow;
+          gl_FragColor = vec4(color, clamp(baseAlpha + lowerHaze * 0.09 + fresnel * rimAlpha + spec, 0.0, 1.0));
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
@@ -162,8 +176,8 @@ export function createTerrarium(
   const bowlGeometry = new THREE.LatheGeometry(bowlPoints, 96)
   const glassParts = []
   for (const [side, base, rim, order] of [
-    [THREE.BackSide, 0.04, 0.35, 1],
-    [THREE.FrontSide, 0.07, 0.7, 3],
+    [THREE.BackSide, 0.17, 0.45, 1],
+    [THREE.FrontSide, 0.12, 0.72, 3],
   ]) {
     const part = new THREE.Mesh(bowlGeometry, glass(side, base, rim))
     part.renderOrder = order
@@ -171,8 +185,20 @@ export function createTerrarium(
     glassParts.push(part)
   }
   const rim = new THREE.Mesh(
-    new THREE.TorusGeometry(1.12, 0.095, 24, 96),
-    glass(THREE.FrontSide, 0.3, 0.7),
+    new THREE.TorusGeometry(1.12, 0.13, 32, 128),
+    // A lit rolled lip gives the milk glass an actual rounded cross-section.
+    new THREE.MeshPhysicalMaterial({
+      color: 0xa6e1dd,
+      roughness: 0.26,
+      metalness: 0,
+      clearcoat: 0.65,
+      clearcoatRoughness: 0.22,
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+      emissive: 0x75aaa6,
+      emissiveIntensity: 0.12,
+    }),
   )
   rim.rotation.x = Math.PI / 2
   rim.position.y = 2.22
@@ -195,6 +221,28 @@ export function createTerrarium(
   const soil = mesh(new THREE.LatheGeometry(soilProfile, 96), materials.soil)
   soil.castShadow = false
 
+  // Soft contact shading on the soil, independent of background and shadow-map resolution.
+  const contactGeometry = new THREE.PlaneGeometry(2, 2)
+  const contactMaterial = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `varying vec2 vUv;
+      void main() {
+        float r = length(vUv * 2.0 - 1.0);
+        gl_FragColor = vec4(0.12, 0.085, 0.07, 0.24 * pow(max(0.0, 1.0 - r), 2.0));
+        #include <colorspace_fragment>
+      }`,
+  })
+  function contact(x, z, rx, rz) {
+    const shadow = new THREE.Mesh(contactGeometry, contactMaterial)
+    shadow.rotation.x = -Math.PI / 2
+    shadow.position.set(x, groundY + 0.003, z)
+    shadow.scale.set(rx, rz, 1)
+    garden.add(shadow)
+  }
+
   // Moss mounds: half spheres resting on the soil.
   const dome = new THREE.SphereGeometry(1, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2)
   const mounds = [
@@ -214,38 +262,59 @@ export function createTerrarium(
     [0.95, -0.35, 0.16, 0.9, 0],
   ]
   for (const [x, z, r, squash, shade] of mounds) {
+    contact(x, z, r * 1.35, r * 1.35)
     const mound = mesh(dome, materials.moss[shade])
     mound.position.set(x, groundY - 0.01, z)
     mound.scale.set(r, r * squash, r)
   }
 
-  // Faceted lavender stones.
-  const stoneGeometry = new THREE.IcosahedronGeometry(1, 1)
-  const stonePositions = stoneGeometry.attributes.position
-  for (let i = 0; i < stonePositions.count; i++) {
-    // Hash the position, not the index, so shared corners move together.
-    const n =
-      Math.sin(
-        stonePositions.getX(i) * 12.9898 +
-          stonePositions.getY(i) * 78.233 +
-          stonePositions.getZ(i) * 37.719,
-      ) * 43758.5453
-    const jitter = 1 + (n - Math.floor(n) - 0.5) * 0.12
-    stonePositions.setXYZ(
-      i,
-      stonePositions.getX(i) * jitter,
-      stonePositions.getY(i) * jitter,
-      stonePositions.getZ(i) * jitter,
-    )
+  // Soft polytopes: fourteen broad faces with rounded transitions, not smooth pills.
+  // A log-sum-exp intersection rounds the edges between planes; the horizontal
+  // top plane keeps the broad tabletop facet visible even on the smallest pebble.
+  function stoneGeometry(seed) {
+    const planes = [
+      { normal: v(0, 1, 0), offset: 0.76 },
+      { normal: v(0, -1, 0), offset: 0.8 },
+    ]
+    for (let ring = 0; ring < 2; ring++) {
+      for (let face = 0; face < 6; face++) {
+        const variation = Math.sin(seed * 13.7 + face * 7.3 + ring * 4.1)
+        const angle = (face / 6) * Math.PI * 2 + ring * 0.28 + variation * 0.09
+        planes.push({
+          normal: v(Math.cos(angle), ring === 0 ? 0.65 : -0.55, Math.sin(angle)).normalize(),
+          offset: 0.86 + variation * 0.045,
+        })
+      }
+    }
+    const geometry = new THREE.SphereGeometry(1, 64, 40)
+    const positions = geometry.attributes.position
+    const direction = v(0, 0, 0)
+    const sharpness = 20
+    for (let i = 0; i < positions.count; i++) {
+      direction.fromBufferAttribute(positions, i).normalize()
+      const distances = planes.map(({ normal, offset }) => direction.dot(normal) / offset)
+      const largest = Math.max(...distances)
+      const smoothMax =
+        largest +
+        Math.log(
+          distances.reduce((sum, distance) => sum + Math.exp((distance - largest) * sharpness), 0),
+        ) /
+          sharpness
+      direction.multiplyScalar(1 / smoothMax)
+      positions.setXYZ(i, direction.x, direction.y, direction.z)
+    }
+    geometry.computeVertexNormals()
+    return geometry
   }
-  stoneGeometry.computeVertexNormals()
+  let stoneSeed = 0
   for (const [x, z, sx, sy, sz, turn] of [
-    [0.38, 0.9, 0.4, 0.17, 0.27, 0.35],
-    [-1.02, 0.55, 0.24, 0.13, 0.17, -0.4],
-    [1.05, 0.5, 0.22, 0.12, 0.16, 0.5],
-    [-0.15, -0.95, 0.2, 0.11, 0.14, 0.2],
+    [0.38, 0.9, 0.4, 0.23, 0.27, 0.35],
+    [-1.02, 0.55, 0.24, 0.17, 0.17, -0.4],
+    [1.05, 0.5, 0.22, 0.16, 0.16, 0.5],
+    [-0.15, -0.95, 0.2, 0.15, 0.14, 0.2],
   ]) {
-    const stone = mesh(stoneGeometry, materials.stone)
+    contact(x, z, sx * 1.2, sz * 1.3)
+    const stone = mesh(stoneGeometry(++stoneSeed), materials.stone)
     stone.position.set(x, groundY + sy * 0.35, z)
     stone.scale.set(sx, sy, sz)
     stone.rotation.y = turn
@@ -360,11 +429,11 @@ export function createTerrarium(
   function update(next) {
     if (next.waters > state.waters) rainUntil = performance.now() + 2400
     state = next
-    sun.intensity = state.night ? 0.3 : 1 + state.sunlight / 55
+    sun.intensity = state.night ? 0.3 : 0.65 + state.sunlight / 95
     sun.color.set(state.night ? 0xb4c8ff : 0xfff1dc)
-    hemi.intensity = state.night ? 0.35 : 0.8
+    hemi.intensity = state.night ? 0.35 : 1.1
     fill.intensity = state.night ? 0.7 : 0.5
-    scene.environmentIntensity = state.night ? 0.3 : 0.55
+    scene.environmentIntensity = state.night ? 0.3 : 0.7
   }
   function contextLost(event) {
     event.preventDefault()

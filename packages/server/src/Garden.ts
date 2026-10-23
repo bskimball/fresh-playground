@@ -49,19 +49,19 @@ export class Garden extends Context.Service<
     readonly get: Effect.Effect<GardenView>
     readonly water: Effect.Effect<GardenView, GardenSaturated>
     readonly updateSettings: (settings: GardenSettings) => Effect.Effect<GardenView>
+    readonly reset: Effect.Effect<GardenView>
   }
 >()("garden/Garden") {
   static readonly layer = Layer.effect(
     Garden,
     Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis
-      const store = yield* Ref.make<Store>(
+      const initial = (now: number) =>
         record(
           { moisture: 54, wateredAt: now, sunlight: 65, night: false, waters: 0, journal: [] },
           "Your little world is ready to grow.",
           now,
-        ),
-      )
+        )
+      const store = yield* Ref.make<Store>(initial(yield* Clock.currentTimeMillis))
 
       const get = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
@@ -109,7 +109,14 @@ export class Garden extends Context.Service<
         })
       })
 
-      return Garden.of({ get, water, updateSettings })
+      const reset = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        const next = initial(now)
+        yield* Ref.set(store, next)
+        return view(next, now)
+      }).pipe(Effect.withSpan("Garden.reset"))
+
+      return Garden.of({ get, water, updateSettings, reset })
     }),
   )
 }

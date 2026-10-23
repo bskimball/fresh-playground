@@ -1,6 +1,7 @@
 // Stylized "clay" plants matching public/images/terrarium-whimsical.png:
 // a round-leaf plant in the middle, golden teardrop leaves on the right, and
-// small round-cap sprouts along the glass. Facets come from flat shading.
+// small round-cap sprouts along the glass. Smooth normals and broad painted
+// midribs keep the rounded blades soft even at small canvas sizes.
 export function createPlantModels(THREE, garden, groundY) {
   const v = (x, y, z) => new THREE.Vector3(x, y, z)
   const plants = []
@@ -8,11 +9,10 @@ export function createPlantModels(THREE, garden, groundY) {
   const clay = (color, extra = {}) =>
     new THREE.MeshStandardMaterial({ color, roughness: 0.82, metalness: 0, ...extra })
   const materials = {
-    leaf: clay(0x66b25e, { flatShading: true, side: THREE.DoubleSide }),
-    midrib: clay(0xb9dc72, { roughness: 0.85, side: THREE.DoubleSide }),
-    golden: clay(0xffd062, { flatShading: true, side: THREE.DoubleSide }),
+    leaf: clay(0xffffff, { vertexColors: true, side: THREE.DoubleSide }),
+    golden: clay(0xffd062, { side: THREE.DoubleSide }),
     stem: clay(0x5c9d49),
-    sprout: clay(0x5ea64d, { flatShading: true, side: THREE.DoubleSide }),
+    sprout: clay(0x5ea64d, { side: THREE.DoubleSide }),
   }
 
   // Leaf in local space: base at the origin, tip along +Y, face toward +Z.
@@ -23,14 +23,21 @@ export function createPlantModels(THREE, garden, groundY) {
     cup = 0.12,
     fold = 0.06,
     point = 0.15,
-    segments = 14,
-    rings = 4,
+    segments = 48,
+    rings = 12,
+    midrib = false,
   }) {
     const positions = []
+    const colors = []
     const surface = (x, y) => {
       const nx = x / (width / 2)
       const ny = (y - length / 2) / (length / 2)
-      return cup * length * (nx * nx + ny * ny) * 0.5 + fold * width * Math.abs(nx)
+      const radius = Math.min(1, nx * nx + ny * ny)
+      return (
+        cup * length * radius * 0.5 +
+        width * 0.13 * Math.sqrt(Math.max(0, 1 - radius)) +
+        fold * width * (Math.sqrt(nx * nx + 0.012) - 0.11)
+      )
     }
     positions.push(0, length / 2, surface(0, length / 2))
     for (let ring = 1; ring <= rings; ring++) {
@@ -58,6 +65,18 @@ export function createPlantModels(THREE, garden, groundY) {
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
+    if (midrib) {
+      const green = new THREE.Color(0x78b86a)
+      const stripe = new THREE.Color(0xc7df87)
+      for (let i = 0; i < positions.length; i += 3) {
+        const x = positions[i] / width
+        const y = positions[i + 1] / length
+        const band = Math.exp(-Math.pow(x / (0.052 + 0.025 * (1 - y)), 2))
+        const color = green.clone().lerp(stripe, band * 0.82)
+        colors.push(color.r, color.g, color.b)
+      }
+      geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3))
+    }
     geometry.setIndex(index)
     geometry.computeVertexNormals()
     return { geometry, surface }
@@ -73,7 +92,7 @@ export function createPlantModels(THREE, garden, groundY) {
 
   function stem(parent, points, radius) {
     const curve = new THREE.CatmullRomCurve3(points)
-    mesh(new THREE.TubeGeometry(curve, 24, radius, 8), materials.stem, parent)
+    mesh(new THREE.TubeGeometry(curve, 32, radius, 12), materials.stem, parent)
     return curve
   }
 
@@ -91,32 +110,8 @@ export function createPlantModels(THREE, garden, groundY) {
 
   function leaf(parent, options, material, position, direction, facing, midrib = false) {
     const group = new THREE.Group()
-    const { geometry, surface } = leafGeometry(options)
+    const { geometry } = leafGeometry({ ...options, midrib })
     mesh(geometry, material, group)
-    if (midrib) {
-      // A slim ribbon lying just above the blade, following its curve.
-      const { length, width } = options
-      const half = width * 0.045
-      const positions = []
-      const index = []
-      const steps = 16
-      for (let i = 0; i <= steps; i++) {
-        const y = (0.05 + (i / steps) * 0.88) * length
-        const taper = 1 - (i / steps) ** 3 * 0.7
-        for (const x of [-half * taper, half * taper]) {
-          positions.push(x, y, surface(x, y) + 0.006)
-        }
-        if (i > 0) {
-          const a = (i - 1) * 2
-          index.push(a, a + 1, a + 3, a, a + 3, a + 2)
-        }
-      }
-      const ribbon = new THREE.BufferGeometry()
-      ribbon.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
-      ribbon.setIndex(index)
-      ribbon.computeVertexNormals()
-      mesh(ribbon, materials.midrib, group).castShadow = false
-    }
     placeLeaf(group, position, direction, facing)
     parent.add(group)
     return group
@@ -162,7 +157,7 @@ export function createPlantModels(THREE, garden, groundY) {
       stem(group, [v(0, 0, 0), v(...s.mid), v(...s.tip)], 0.036)
       leaf(
         group,
-        { length: s.length, width: s.width, cup: 0.14, fold: 0.05, point: 0.06, segments: 16 },
+        { length: s.length, width: s.width, cup: 0.14, fold: 0.05, point: 0.06, segments: 48 },
         materials.leaf,
         v(...s.tip),
         v(...s.dir),
@@ -217,8 +212,8 @@ export function createPlantModels(THREE, garden, groundY) {
           cup: 0.16,
           fold: 0.06,
           point: 0.3,
-          segments: 12,
-          rings: 3,
+          segments: 48,
+          rings: 12,
         },
         materials.golden,
         v(...l.tip),
@@ -229,7 +224,7 @@ export function createPlantModels(THREE, garden, groundY) {
   }
 
   // Round-cap sprouts near the glass.
-  const sproutCap = new THREE.SphereGeometry(1, 12, 6)
+  const sproutCap = new THREE.SphereGeometry(1, 32, 16)
   for (const [x, z, sprouts] of [
     [
       -1.05,

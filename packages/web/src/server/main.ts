@@ -1,10 +1,11 @@
 import { createServer } from "node:http"
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
-import { ApiRoutes, Garden } from "@playground/server"
+import { ApiRoutes, Auth, AuthRoutes, Garden, Mailer } from "@playground/server"
 import { Effect, Layer, Logger, References } from "effect"
-import { HttpMiddleware, HttpRouter, HttpServerResponse } from "effect/http"
+import { HttpMiddleware, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { loadAssets } from "./assets.ts"
 import { PageRoutes } from "./pages.tsx"
+import { PerformanceRoutes } from "./Performance.ts"
 import { requestLogging, serverConfig } from "./runtime.ts"
 
 // br/gzip for every response the client accepts it for.
@@ -20,6 +21,25 @@ const Revalidation = HttpRouter.middleware(
       const etag = response.headers.etag
       if (response.status !== 304 || etag === undefined || etag.startsWith("W/")) return response
       return HttpServerResponse.setHeaders(response, { etag: `W/${etag}`, vary: "Accept-Encoding" })
+    }),
+  { global: true },
+)
+
+// Speculative HTML has its own cache; ordinary Cache-Control does not invalidate it.
+const PrefetchInvalidation = HttpRouter.middleware(
+  (app) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      const response = yield* app
+      if (
+        request.url.split("?", 1)[0] !== "/api/performance" &&
+        ["POST", "PUT", "PATCH", "DELETE"].includes(request.method) &&
+        response.status >= 200 &&
+        response.status < 300
+      ) {
+        return HttpServerResponse.setHeader(response, "clear-site-data", '"prefetchCache"')
+      }
+      return response
     }),
   { global: true },
 )
@@ -54,15 +74,18 @@ Effect.gen(function* () {
   const logger = config.environment === "production" ? Logger.consoleJson : Logger.consolePretty()
   const server = Effect.gen(function* () {
     const assets = yield* Effect.sync(loadAssets)
-    // One service instance is shared by pages, API handlers, and readiness checks.
+    // One instance of each service is shared by pages, API handlers, and readiness checks.
     const App = Layer.mergeAll(
       ApiRoutes,
+      AuthRoutes,
+      PerformanceRoutes,
       PageRoutes(assets.pages),
       assets.routes,
       Health,
       Compression,
       Revalidation,
-    ).pipe(Layer.provide(Garden.layer))
+      PrefetchInvalidation,
+    ).pipe(Layer.provide([Garden.layer, Auth.layer.pipe(Layer.provide(Mailer.log))]))
 
     yield* HttpRouter.serve(App, { disableLogger: true, middleware: requestLogging }).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),

@@ -3,6 +3,8 @@ import { Card } from "@astryxdesign/core/Card"
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react"
 import * as stylex from "@stylexjs/stylex"
 import { AsyncResult } from "effect/reactivity"
+import { useEffect } from "react"
+import { watchFreshness } from "../features/terrarium/freshness.ts"
 import { ApiClient } from "../client/ApiClient.ts"
 import { AppTheme } from "../components/AppTheme.tsx"
 import { colors } from "../styles/tokens.stylex.ts"
@@ -18,6 +20,14 @@ export default function LiveStatusIsland() {
   const garden = useAtomValue(gardenAtom)
   const refreshHello = useAtomRefresh(helloAtom)
   const refreshGarden = useAtomRefresh(gardenAtom)
+  useEffect(
+    () =>
+      watchFreshness(() => {
+        refreshHello()
+        refreshGarden()
+      }),
+    [refreshHello, refreshGarden],
+  )
   const waiting = hello.waiting || garden.waiting
 
   return (

@@ -133,7 +133,7 @@ const styles = stylex.create({
     maxWidth: "90%",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "#dce4cd80",
+    borderColor: "light-dark(#dce4cd80, #b4c99430)",
     borderRadius: "50%",
     "::after": {
       content: '""',
@@ -141,13 +141,13 @@ const styles = stylex.create({
       inset: -25,
       borderWidth: 1,
       borderStyle: "dashed",
-      borderColor: "#dce4cd70",
+      borderColor: "light-dark(#dce4cd70, #b4c99425)",
       borderRadius: "50%",
     },
   },
   orbitNight: {
-    borderColor: "#ffffff12",
-    "::after": { borderColor: "#ffffff12" },
+    borderColor: "light-dark(#ffffff12, #ffffff12)",
+    "::after": { borderColor: "light-dark(#ffffff12, #ffffff12)" },
   },
   shadow: {
     position: "absolute",
@@ -155,7 +155,7 @@ const styles = stylex.create({
     width: "58%",
     height: 30,
     borderRadius: "50%",
-    backgroundColor: "#64774522",
+    backgroundColor: "light-dark(#64774522, #10170c66)",
     filter: "blur(15px)",
   },
   fallback: {
@@ -195,16 +195,16 @@ const styles = stylex.create({
   divider: {
     width: 1,
     height: 16,
-    backgroundColor: "#cbd5bf",
+    backgroundColor: "light-dark(#cbd5bf, #57634b)",
     marginInline: 3,
   },
   hint: {
     textAlign: "center",
-    color: "#76856b",
+    color: "light-dark(#76856b, #c0cdb2)",
     fontSize: 10,
     paddingInline: 20,
     marginTop: 8,
     marginBottom: 0,
   },
-  hintNight: { color: "#bdcabb" },
+  hintNight: { color: "light-dark(#bdcabb, #c3d2c6)" },
 })

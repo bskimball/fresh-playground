@@ -1,13 +1,15 @@
+import "vite/modulepreload-polyfill"
 import "../styles/global.css"
-import { Garden } from "@playground/contract"
-import { Schema } from "effect"
-import { hydrateRoot } from "react-dom/client"
-import TerrariumIsland from "../features/terrarium/TerrariumIsland.tsx"
-
-const decodeGarden = Schema.decodeSync(Schema.toCodecJson(Garden))
 
 const root = document.querySelector<HTMLElement>("[data-island=terrarium]")
 if (root) {
-  const garden = decodeGarden(JSON.parse(root.dataset.props ?? "null"))
-  hydrateRoot(root, <TerrariumIsland garden={garden} />)
+  void import("./mountGarden.tsx")
+    .then(({ mountGarden }) => mountGarden(root))
+    .catch((error: unknown) => {
+      console.error("Garden loading failed", error)
+      root.removeAttribute("aria-busy")
+      const status = document.querySelector<HTMLElement>("[data-island-status=terrarium]")
+      if (status)
+        status.textContent = "Interactive controls could not load. Reload the page to try again."
+    })
 }
