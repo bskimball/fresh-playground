@@ -1,4 +1,4 @@
-import { Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { HttpRouter, HttpServerResponse } from "effect/http"
 
 export interface PwaOptions {
@@ -34,15 +34,15 @@ const webManifest = JSON.stringify({
     },
     {
       src: "/images/terrarium-whimsical.png",
-      sizes: "1254x1254",
+      sizes: "512x512",
       type: "image/png",
       purpose: "any",
     },
   ],
 })
 
-export function pwaRoutes({ version, script, assets }: PwaOptions) {
-  const swSource = `globalThis.__PWA__=${JSON.stringify({ version, assets })};\n${script}`
+export function pwaRoutes(options: PwaOptions | (() => PwaOptions)) {
+  const resolve = typeof options === "function" ? options : () => options
   return Layer.mergeAll(
     HttpRouter.add(
       "GET",
@@ -63,9 +63,13 @@ export function pwaRoutes({ version, script, assets }: PwaOptions) {
     HttpRouter.add(
       "GET",
       "/sw.js",
-      HttpServerResponse.text(swSource, {
-        contentType: "text/javascript; charset=utf-8",
-        headers: { "cache-control": "no-cache" },
+      Effect.sync(() => {
+        const { version, script, assets } = resolve()
+        const swSource = `globalThis.__PWA__=${JSON.stringify({ version, assets })};\n${script}`
+        return HttpServerResponse.text(swSource, {
+          contentType: "text/javascript; charset=utf-8",
+          headers: { "cache-control": "no-cache" },
+        })
       }),
     ),
   )

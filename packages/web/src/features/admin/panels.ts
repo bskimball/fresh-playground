@@ -1,8 +1,16 @@
-import { can, type Permissions } from "@playground/contract"
+import { can, type Permissions, type SessionUser } from "@playground/contract"
 import type { ComponentType } from "react"
+import { defineIsland } from "../../client/hydrateIsland.ts"
 import type { AdminPanelProps } from "./AdminPanelProps.ts"
 import GardenPanel from "./GardenPanel.tsx"
 import UsersPanel from "./UsersPanel.tsx"
+
+export interface AdminIslandProps {
+  readonly panel: string
+  readonly user: SessionUser
+}
+
+export const adminPanelIsland = defineIsland<AdminIslandProps>("admin-panel")
 
 /**
  * One entry per admin page at `/admin/<id>`. A panel is listed and served only

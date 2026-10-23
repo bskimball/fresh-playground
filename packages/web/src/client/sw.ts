@@ -22,8 +22,8 @@ const config = sw.__PWA__ ?? { version: "dev", assets: [] }
 const CACHE_PREFIX = "little-world-"
 const CACHE_NAME = `${CACHE_PREFIX}${config.version}`
 
-const HTML_ROUTES = ["/", "/journal", "/about"]
-const OFFLINE_WARM_ROUTES = [...HTML_ROUTES, "/api/garden", "/api/hello"]
+const HTML_ROUTES = ["/", "/kanban", "/journal", "/about"]
+const OFFLINE_WARM_ROUTES = [...HTML_ROUTES, "/api/garden", "/api/kanban", "/api/hello"]
 const NETWORK_FIRST_PATHS = new Set(OFFLINE_WARM_ROUTES)
 
 let authGeneration = 0
@@ -93,7 +93,11 @@ sw.addEventListener("activate", (event) => {
 if (typeof BroadcastChannel !== "undefined") {
   const channel = new BroadcastChannel("playground-garden")
   channel.onmessage = (event: MessageEvent<unknown>) => {
-    if (event.data === "garden-mutated") {
+    if (
+      event.data === "garden-mutated" ||
+      event.data === "kanban-mutated" ||
+      event.data === "theme-mutated"
+    ) {
       void refreshOfflineRoutes()
     }
   }

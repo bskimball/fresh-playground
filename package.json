@@ -11,6 +11,7 @@
     "start": "vp -C packages/web run start",
     "lint": "vp lint",
     "format": "vp fmt",
+    "test": "vp test --run",
     "check": "vp check && vp run -r typecheck"
   },
   "devDependencies": {

@@ -1,7 +1,13 @@
+import { readdirSync } from "node:fs"
 import babel from "@rolldown/plugin-babel"
 import stylex from "@stylexjs/unplugin"
 import react, { reactCompilerPreset } from "@vitejs/plugin-react"
 import { defineConfig, lazyPlugins } from "vite-plus"
+
+const clientInputs = readdirSync(new URL("./src/client", import.meta.url))
+  .filter((name) => /^[a-z]+\.(ts|tsx)$/.test(name))
+  .sort()
+  .map((name) => `src/client/${name}`)
 
 // Vite only bundles here; the Effect HTTP server in src/server/main.ts serves
 // pages, the API and the built client files.
@@ -17,14 +23,7 @@ export default defineConfig({
         manifest: true,
         cssCodeSplit: false,
         rolldownOptions: {
-          input: [
-            "src/client/garden.tsx",
-            "src/client/about.ts",
-            "src/client/login.tsx",
-            "src/client/admin.tsx",
-            "src/client/performance.ts",
-            "src/client/sw.ts",
-          ],
+          input: clientInputs,
         },
       },
     },

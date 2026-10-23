@@ -3,10 +3,13 @@ import { Clock, Effect, Layer } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
 import { AdminHandlers, AuthenticationLive } from "./Admin.ts"
 import { Garden } from "./Garden.ts"
+import { Kanban } from "./Kanban.ts"
 
 export { Auth, AuthRoutes, webHeaders } from "./Auth.ts"
-export { Garden } from "./Garden.ts"
+export { Garden, type GardenStore, moistureAt } from "./Garden.ts"
+export { Kanban, seedCards } from "./Kanban.ts"
 export { Mailer } from "./Mailer.ts"
+export { Sqlite } from "./Sqlite.ts"
 
 const GardenHandlers = HttpApiBuilder.group(
   AppApi,
@@ -17,6 +20,18 @@ const GardenHandlers = HttpApiBuilder.group(
       get: () => garden.get,
       water: () => garden.water,
       settings: ({ payload }) => garden.updateSettings(payload),
+    })
+  }),
+)
+
+const KanbanHandlers = HttpApiBuilder.group(
+  AppApi,
+  "kanban",
+  Effect.fn(function* (handlers) {
+    const kanban = yield* Kanban
+    return handlers.handleAll({
+      get: () => kanban.get,
+      save: ({ payload }) => kanban.save(payload),
     })
   }),
 )
@@ -37,6 +52,6 @@ const SystemHandlers = HttpApiBuilder.group(AppApi, "system", (handlers) =>
  * app to provide, so the API and server-rendered pages share one instance.
  */
 export const ApiRoutes = HttpApiBuilder.layer(AppApi).pipe(
-  Layer.provide([GardenHandlers, AdminHandlers, SystemHandlers]),
+  Layer.provide([GardenHandlers, KanbanHandlers, AdminHandlers, SystemHandlers]),
   Layer.provide(AuthenticationLive),
 )

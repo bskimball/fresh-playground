@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp build --app && (vp build --app --watch & node --env-file-if-exists=../../.env --watch-path=dist dist/server/main.js)",
+    "dev": "node -e \"if (!require('node:fs').existsSync('dist/server/main.js')) require('node:child_process').execFileSync('vp', ['build', '--app'], { stdio: 'inherit', shell: true })\" && (vp build --app --watch & node --env-file-if-exists=../../.env --watch-path=dist/server dist/server/main.js)",
     "build": "vp build --app",
     "start": "node --env-file-if-exists=../../.env dist/server/main.js",
     "typecheck": "tsc --noEmit"

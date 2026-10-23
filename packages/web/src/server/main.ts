@@ -1,6 +1,6 @@
 import { createServer } from "node:http"
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
-import { ApiRoutes, Auth, AuthRoutes, Garden, Mailer } from "@playground/server"
+import { ApiRoutes, Auth, AuthRoutes, Garden, Kanban, Mailer, Sqlite } from "@playground/server"
 import { Effect, Layer, Logger, References } from "effect"
 import { HttpMiddleware, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { loadAssets } from "./assets.ts"
@@ -73,8 +73,16 @@ Effect.gen(function* () {
   const config = yield* serverConfig
   const logger = config.environment === "production" ? Logger.consoleJson : Logger.consolePretty()
   const server = Effect.gen(function* () {
-    const assets = yield* Effect.sync(loadAssets)
+    const assets = yield* Effect.sync(() =>
+      loadAssets({ devReload: config.environment === "development" }),
+    )
     // One instance of each service is shared by pages, API handlers, and readiness checks.
+    const Services = Layer.mergeAll(
+      Garden.layer,
+      Kanban.layer,
+      Auth.layer.pipe(Layer.provide(Mailer.log)),
+    ).pipe(Layer.provide(Sqlite.layer))
+
     const App = Layer.mergeAll(
       ApiRoutes,
       AuthRoutes,
@@ -85,7 +93,7 @@ Effect.gen(function* () {
       Compression,
       Revalidation,
       PrefetchInvalidation,
-    ).pipe(Layer.provide([Garden.layer, Auth.layer.pipe(Layer.provide(Mailer.log))]))
+    ).pipe(Layer.provide(Services))
 
     yield* HttpRouter.serve(App, { disableLogger: true, middleware: requestLogging }).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { port: config.port, host: config.host })),

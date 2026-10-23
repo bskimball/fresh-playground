@@ -1,61 +1,53 @@
-import { Garden as GardenSchema } from "@playground/contract"
-import { Auth, Garden, webHeaders } from "@playground/server"
-import { Effect, Option, Schema } from "effect"
+import { Auth, Garden, Kanban, webHeaders } from "@playground/server"
+import { Effect, Option } from "effect"
 import { HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/http"
 import type { ReactNode } from "react"
 import { renderToString } from "react-dom/server"
 import { AboutArticle } from "../components/AboutArticle.tsx"
 import { GardenHeading } from "../components/GardenHeading.tsx"
-import { ThemePreferenceContext, themeFromCookie } from "../components/themePreference.ts"
 import { JournalTimeline } from "../components/JournalTimeline.tsx"
 import type { Section, Viewer } from "../components/Shell.tsx"
+import { ThemePreferenceContext, themeFromCookie } from "../components/themePreference.ts"
 import { AdminLayout } from "../features/admin/AdminLayout.tsx"
-import { type AdminPanel, adminPanels, panelsFor } from "../features/admin/panels.ts"
-import LoginIsland, { type LoginProps } from "../features/auth/LoginIsland.tsx"
-import TerrariumIsland from "../features/terrarium/TerrariumIsland.tsx"
+import {
+  type AdminPanel,
+  adminPanelIsland,
+  adminPanels,
+  panelsFor,
+} from "../features/admin/panels.ts"
+import LoginIsland, { type LoginProps, loginIsland } from "../features/auth/LoginIsland.tsx"
+import KanbanIsland, { kanbanIsland } from "../features/kanban/KanbanIsland.tsx"
+import TerrariumIsland, { terrariumIsland } from "../features/terrarium/TerrariumIsland.tsx"
 import LiveStatusIsland from "../islands/LiveStatusIsland.tsx"
 import { Document, Island } from "./Document.tsx"
+import { safeNext } from "./runtime.ts"
+
+export { safeNext }
+
+export type ClientEntryName = "garden" | "kanban" | "about" | "login" | "admin"
+
+export interface RouteEntryAssets {
+  readonly script: string
+  readonly preloads: ReadonlyArray<string>
+}
 
 /** Built client files, from the Vite manifest. */
 export interface Assets {
   readonly css: string
-  readonly garden: string
-  readonly about: string
-  readonly login: string
-  readonly admin: string
+  readonly fonts: ReadonlyArray<string>
   readonly performance: string
-  readonly preloads: {
-    readonly garden: string[]
-    readonly about: string[]
-    readonly login: string[]
-    readonly admin: string[]
-  }
+  readonly devReload?: boolean | undefined
+  readonly entry: (name: ClientEntryName) => RouteEntryAssets
 }
-
-const encodeGarden = Schema.encodeSync(Schema.toCodecJson(GardenSchema))
 
 const searchParams = (request: HttpServerRequest.HttpServerRequest) =>
   new URL(request.url, "http://localhost").searchParams
-
-const localOrigin = "http://local.invalid"
-
-/**
- * Only same-origin paths are followed after sign-in. Parsing the way a browser
- * does catches `/\evil`, `/%09/evil` and similar tricks that become `//evil`.
- * The normalized path is checked too: `/..//evil` keeps the origin but
- * normalizes to `//evil`, which the browser then reads as another host.
- */
-const safeNext = (value: string | null) => {
-  if (value === null || !value.startsWith("/")) return "/"
-  const url = URL.parse(value, localOrigin)
-  if (url?.origin !== localOrigin || url.pathname.startsWith("//")) return "/"
-  return `${url.pathname}${url.search}${url.hash}`
-}
 
 export const PageRoutes = (assets: Assets) =>
   HttpRouter.use(
     Effect.fn(function* (router) {
       const garden = yield* Garden
+      const kanban = yield* Kanban
       const auth = yield* Auth
 
       const viewerFor = (request: HttpServerRequest.HttpServerRequest) =>
@@ -77,19 +69,23 @@ export const PageRoutes = (assets: Assets) =>
           title: string
           current: Section
           viewer: Option.Option<Viewer>
-          script?: string
-          preloads?: string[]
+          entry?: ClientEntryName
           status?: number
           children: ReactNode
         },
       ) => {
-        const { viewer, status = 200, ...document } = options
+        const { viewer, entry, status = 200, ...document } = options
+        const routeAssets = entry ? assets.entry(entry) : undefined
         return HttpServerResponse.html(
           `<!DOCTYPE html>${renderToString(
             <Document
               theme={themeFor(request)}
               css={assets.css}
+              fonts={assets.fonts}
               performance={assets.performance}
+              devReload={assets.devReload}
+              script={routeAssets?.script}
+              preloads={routeAssets?.preloads}
               viewer={Option.getOrUndefined(viewer)}
               {...document}
             />,
@@ -109,17 +105,35 @@ export const PageRoutes = (assets: Assets) =>
             title: "Your tiny terrarium",
             current: "garden",
             viewer: yield* viewerFor(request),
-            script: assets.garden,
-            preloads: assets.preloads.garden,
+            entry: "garden",
             children: (
               <>
                 <GardenHeading />
                 <Island
-                  name="terrarium"
+                  island={terrariumIsland}
                   html={renderIsland(request, <TerrariumIsland garden={state} />)}
-                  props={encodeGarden(state)}
+                  props={state}
                 />
               </>
+            ),
+          })
+        }),
+      )
+
+      yield* router.add("GET", "/kanban", (request) =>
+        Effect.gen(function* () {
+          const board = yield* kanban.get
+          return page(request, {
+            title: "Kanban",
+            current: "kanban",
+            viewer: yield* viewerFor(request),
+            entry: "kanban",
+            children: (
+              <Island
+                island={kanbanIsland}
+                html={renderIsland(request, <KanbanIsland board={board} />)}
+                props={board}
+              />
             ),
           })
         }),
@@ -143,8 +157,7 @@ export const PageRoutes = (assets: Assets) =>
             title: "About",
             current: "about",
             viewer: yield* viewerFor(request),
-            script: assets.about,
-            preloads: assets.preloads.about,
+            entry: "about",
             children: (
               <AboutArticle>
                 <Island name="live-status" html={renderIsland(request, <LiveStatusIsland />)} />
@@ -169,11 +182,10 @@ export const PageRoutes = (assets: Assets) =>
             title: "Sign in",
             current: "login",
             viewer,
-            script: assets.login,
-            preloads: assets.preloads.login,
+            entry: "login",
             children: (
               <Island
-                name="login"
+                island={loginIsland}
                 html={renderIsland(request, <LoginIsland {...props} />)}
                 props={props}
               />
@@ -220,12 +232,11 @@ export const PageRoutes = (assets: Assets) =>
             title: `${panel.label} · Admin`,
             current: "admin",
             viewer,
-            script: assets.admin,
-            preloads: assets.preloads.admin,
+            entry: "admin",
             children: (
               <AdminLayout panels={panels} current={panel}>
                 <Island
-                  name="admin-panel"
+                  island={adminPanelIsland}
                   html={renderIsland(request, <panel.Island user={user} />)}
                   props={{ panel: panel.id, user }}
                 />

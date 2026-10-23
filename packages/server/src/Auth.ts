@@ -1,6 +1,4 @@
-import { mkdirSync } from "node:fs"
-import { dirname } from "node:path"
-import { DatabaseSync } from "node:sqlite"
+import type { DatabaseSync } from "node:sqlite"
 import { ac, roles, type SessionUser, type SignInMethods } from "@playground/contract"
 import { betterAuth, type BetterAuthOptions } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
@@ -9,6 +7,7 @@ import { magicLink } from "better-auth/plugins/magic-link"
 import { Config, Context, Effect, Layer, Option, Redacted } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Mailer } from "./Mailer.ts"
+import { Sqlite } from "./Sqlite.ts"
 
 const authConfig = Config.all({
   environment: Config.Literals(["development", "test", "production"], "NODE_ENV").pipe(
@@ -18,7 +17,6 @@ const authConfig = Config.all({
   port: Config.Port("PORT").pipe(Config.withDefault(4321)),
   baseURL: Config.String("BETTER_AUTH_URL").pipe(Config.option),
   secret: Config.Redacted("BETTER_AUTH_SECRET").pipe(Config.option),
-  databasePath: Config.String("DATABASE_PATH").pipe(Config.withDefault("data/app.db")),
   password: Config.Boolean("AUTH_PASSWORD").pipe(Config.withDefault(true)),
   magicLink: Config.Boolean("AUTH_MAGIC_LINK").pipe(Config.option),
   google: Config.all({
@@ -130,15 +128,7 @@ export class Auth extends Context.Service<
         social,
       }
 
-      const database = yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          mkdirSync(dirname(config.databasePath), { recursive: true })
-          const database = new DatabaseSync(config.databasePath)
-          database.exec("PRAGMA journal_mode = WAL")
-          return database
-        }),
-        (database) => Effect.sync(() => database.close()),
-      )
+      const database = yield* Sqlite
       const host = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host
       const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
       const baseURL = Option.getOrElse(config.baseURL, () => `http://${authority}:${config.port}`)

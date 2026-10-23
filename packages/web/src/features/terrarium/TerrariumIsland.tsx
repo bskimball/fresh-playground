@@ -2,12 +2,14 @@ import { Button } from "@astryxdesign/core/Button"
 import { Card } from "@astryxdesign/core/Card"
 import { IconButton } from "@astryxdesign/core/IconButton"
 import { Slider } from "@astryxdesign/core/Slider"
-import { type Garden, SATURATED_AT } from "@playground/contract"
+import { Garden, SATURATED_AT } from "@playground/contract"
 import * as stylex from "@stylexjs/stylex"
 import { useActorRef, useSelector } from "@xstate/react"
 import { useEffect } from "react"
+import { defineIsland } from "../../client/hydrateIsland.ts"
 import { AppTheme } from "../../components/AppTheme.tsx"
 import { Icon } from "../../components/Icon.tsx"
+import { schemaJsonCodec } from "../../machines/offlineSync.ts"
 import { text } from "../../styles/text.ts"
 import { colors, fonts, media } from "../../styles/tokens.stylex.ts"
 import { careMachine } from "./care.machine.ts"
@@ -39,6 +41,8 @@ const formatSyncStatus = (
   }
   return ""
 }
+
+export const terrariumIsland = defineIsland("terrarium", schemaJsonCodec(Garden))
 
 /** Hydrated island. The server seeds it with the garden it just loaded. */
 export default function TerrariumIsland({ garden: initial }: { garden: Garden }) {
@@ -78,16 +82,21 @@ export default function TerrariumIsland({ garden: initial }: { garden: Garden })
           aria-label="Your terrarium"
         >
           <div {...stylex.props(styles.stageTop)}>
-            <span {...stylex.props(styles.livePill, night && styles.dimNight)}>
+            <span {...stylex.props(styles.livePill, night && styles.livePillNight)}>
               <span {...stylex.props(styles.liveDot)} />
               {night ? "RESTING PEACEFULLY" : "HAPPILY GROWING"}
             </span>
-            <IconButton
-              label={night ? "Switch to daytime" : "Switch to nighttime"}
-              icon={<Icon name={night ? "moon" : "sun"} />}
-              onClick={() => care.send({ type: "TOGGLE_NIGHT" })}
-              aria-pressed={night}
-            />
+            <div {...stylex.props(styles.modeControl)}>
+              <span {...stylex.props(styles.modeLabel, night && styles.dimNight)}>
+                {night ? "Nightfall" : "Daylight"}
+              </span>
+              <IconButton
+                label={night ? "Switch to daytime" : "Switch to nighttime"}
+                icon={<Icon name={night ? "moon" : "sun"} size={18} />}
+                onClick={() => care.send({ type: "TOGGLE_NIGHT" })}
+                aria-pressed={night}
+              />
+            </div>
           </div>
           <TerrariumScene sunlight={sunlight} night={night} waters={garden.waters} />
           <div {...stylex.props(styles.caption)}>
@@ -95,13 +104,22 @@ export default function TerrariumIsland({ garden: initial }: { garden: Garden })
               A WORLD OF YOUR OWN
             </span>
             <h2 {...stylex.props(text.serif, styles.captionTitle)}>The little grove</h2>
-            <p {...stylex.props(styles.captionText, night && styles.dimNight)} aria-live="polite">
+            <p
+              {...stylex.props(text.pretty, styles.captionText, night && styles.dimNight)}
+              aria-live="polite"
+            >
               {message}
             </p>
           </div>
           <div {...stylex.props(styles.stageFooter, night && styles.stageFooterNight)}>
             <span {...stylex.props(styles.footerItem)}>
-              <Icon name="leaf" size={16} /> A miniature woodland
+              <Icon name="leaf" size={15} /> A miniature woodland
+            </span>
+            <span
+              {...stylex.props(text.tabular, styles.watersBadge, night && styles.watersBadgeNight)}
+            >
+              <Icon name="drop" size={13} />
+              Watered {garden.waters} {garden.waters === 1 ? "time" : "times"}
             </span>
             <span {...stylex.props(styles.footerItem, styles.footerAside)}>
               Made for quiet moments{" "}
@@ -117,15 +135,15 @@ export default function TerrariumIsland({ garden: initial }: { garden: Garden })
           <h2 {...stylex.props(text.serif, styles.panelTitle)}>How’s it growing?</h2>
           <p {...stylex.props(styles.panelText)}>Your tiny ecosystem is in good hands.</p>
 
-          <div {...stylex.props(styles.stat)}>
+          <div {...stylex.props(styles.statWell)}>
             <div {...stylex.props(styles.statHeading)}>
               <span {...stylex.props(styles.statLabel)}>
                 <span {...stylex.props(styles.statIcon, styles.waterIcon)}>
-                  <Icon name="drop" size={18} />
+                  <Icon name="drop" size={17} />
                 </span>
                 Soil moisture
               </span>
-              <strong {...stylex.props(styles.statValue)}>{garden.moisture}%</strong>
+              <strong {...stylex.props(text.tabular, styles.statValue)}>{garden.moisture}%</strong>
             </div>
             <progress
               {...stylex.props(styles.meter)}
@@ -136,15 +154,15 @@ export default function TerrariumIsland({ garden: initial }: { garden: Garden })
             <p {...stylex.props(styles.statNote)}>{moistureNote(garden.moisture)}</p>
           </div>
 
-          <div {...stylex.props(styles.stat)}>
+          <div {...stylex.props(styles.statWell)}>
             <div {...stylex.props(styles.statHeading)}>
               <span {...stylex.props(styles.statLabel)}>
                 <span {...stylex.props(styles.statIcon, styles.sunIcon)}>
-                  <Icon name="sun" size={18} />
+                  <Icon name="sun" size={17} />
                 </span>
                 Sunlight
               </span>
-              <strong {...stylex.props(styles.statValue)}>
+              <strong {...stylex.props(text.tabular, styles.statValue)}>
                 {night ? "Resting" : `${sunlight}%`}
               </strong>
             </div>
@@ -178,29 +196,29 @@ export default function TerrariumIsland({ garden: initial }: { garden: Garden })
 
           <div {...stylex.props(styles.note)}>
             <span {...stylex.props(styles.noteIcon)}>
-              <Icon name="spark" size={24} />
+              <Icon name="spark" size={20} />
             </span>
             <div>
               <strong {...stylex.props(styles.noteTitle)}>No rush. Just grow.</strong>
-              <p {...stylex.props(styles.noteText)}>
+              <p {...stylex.props(text.pretty, styles.noteText)}>
                 A little attention goes a long way. Your garden is a place to enjoy the small
                 things.
               </p>
             </div>
           </div>
 
-          <div>
+          <div {...stylex.props(styles.journalSection)}>
             <h3 {...stylex.props(styles.journalTitle)}>
-              Little moments
+              <span>Little moments</span>
               <a href="/journal" {...stylex.props(styles.journalLink)}>
-                SEE ALL
+                View journal →
               </a>
             </h3>
             <ul {...stylex.props(styles.journalList)}>
               {garden.journal.slice(0, 3).map((entry) => (
                 <li key={entry.id} {...stylex.props(styles.journalItem)}>
                   <span {...stylex.props(styles.journalDot)} />
-                  {entry.text}
+                  <span {...stylex.props(text.pretty)}>{entry.text}</span>
                 </li>
               ))}
             </ul>
@@ -215,8 +233,8 @@ const styles = stylex.create({
   layout: {
     display: "grid",
     gridTemplateColumns: {
-      default: "minmax(0, 1fr) 330px",
-      [media.tablet]: "minmax(0, 1fr) 295px",
+      default: "minmax(0, 1fr) 360px",
+      [media.tablet]: "minmax(0, 1fr) 310px",
       [media.mobile]: "1fr",
     },
     gap: { default: 28, [media.tablet]: 18 },
@@ -227,14 +245,16 @@ const styles = stylex.create({
     overflow: "hidden",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "light-dark(#e0e5d5, #4c5942)",
+    borderColor: colors.borderSubtle,
     borderRadius: 24,
     backgroundImage:
       "radial-gradient(ellipse at 50% 37%, light-dark(#f9fbed, #414e36) 0%, light-dark(#eef2e2, #303b2b) 55%, light-dark(#e9efdf, #283324) 100%)",
     minHeight: { default: 650, [media.tablet]: 620, [media.mobile]: 600, [media.tiny]: 550 },
     display: "flex",
     flexDirection: "column",
-    transition: "background 0.7s, color 0.7s",
+    boxShadow: colors.shadowSm,
+    transitionProperty: "background-image, color, border-color",
+    transitionDuration: "0.7s",
   },
   stageNight: {
     backgroundImage:
@@ -248,122 +268,187 @@ const styles = stylex.create({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingBlock: 23,
-    paddingInline: 26,
+    paddingBlock: 20,
+    paddingInline: 24,
   },
   livePill: {
-    display: "flex",
+    display: "inline-flex",
     alignItems: "center",
     gap: 8,
-    fontSize: 9,
-    fontWeight: 600,
+    fontSize: 10,
+    fontWeight: 700,
     letterSpacing: 1.4,
-    color: "light-dark(#758768, #c0d2a9)",
+    color: colors.mossDark,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    borderRadius: 999,
+    paddingBlock: 6,
+    paddingInline: 12,
+    boxShadow: colors.shadowSm,
+  },
+  livePillNight: {
+    backgroundColor: "light-dark(#ffffff14, #ffffff12)",
+    borderColor: "light-dark(#ffffff24, #ffffff20)",
+    color: "light-dark(#e2ebd8, #d8e6cc)",
   },
   liveDot: {
     width: 6,
     height: 6,
-    backgroundColor: "light-dark(#91aa75, #adc68d)",
+    backgroundColor: "light-dark(#7d9a5f, #adc68d)",
     borderRadius: "50%",
-    boxShadow: "0 0 0 4px light-dark(#91aa7517, #adc68d25)",
+    boxShadow: "0 0 0 4px light-dark(#7d9a5f22, #adc68d28)",
+  },
+  modeControl: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  modeLabel: {
+    fontSize: 11,
+    fontWeight: 500,
+    color: colors.muted,
+    display: { default: "inline", [media.tiny]: "none" },
   },
   caption: {
     textAlign: "center",
     zIndex: 2,
-    marginTop: { default: 25, [media.tablet]: 35, [media.mobile]: 22 },
+    marginTop: { default: 22, [media.tablet]: 30, [media.mobile]: 20 },
     paddingTop: 0,
     paddingInline: 20,
-    paddingBottom: 25,
+    paddingBottom: 24,
   },
   captionEyebrow: { fontSize: 9, display: "block", marginBottom: 0 },
   captionTitle: {
-    fontSize: 29,
+    fontSize: 30,
     letterSpacing: -0.8,
     marginTop: 5,
     marginInline: 0,
     marginBottom: 6,
   },
   captionText: {
-    fontSize: 12,
-    color: "light-dark(#879177, #c2ccb5)",
-    margin: 0,
-    minHeight: 18,
+    fontSize: 13,
+    color: "light-dark(#6e7861, #c2ccb5)",
+    marginBlock: 0,
+    marginInline: "auto",
+    maxWidth: 420,
+    minHeight: 20,
   },
   stageFooter: {
     marginTop: "auto",
     display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
     justifyContent: "space-between",
+    gap: 10,
     borderTopWidth: 1,
     borderTopStyle: "solid",
     borderTopColor: "light-dark(#dce3cf, #4c5942)",
-    paddingBlock: { default: 16, [media.tablet]: 15 },
-    paddingInline: { default: 25, [media.tablet]: 15 },
-    fontSize: 10,
-    color: "light-dark(#8b967d, #bdcbb0)",
+    paddingBlock: { default: 14, [media.tablet]: 14 },
+    paddingInline: { default: 24, [media.tablet]: 16 },
+    fontSize: 11,
+    color: "light-dark(#6e7960, #bdcbb0)",
   },
   stageFooterNight: {
     borderTopColor: "light-dark(#ffffff18, #ffffff18)",
     color: "light-dark(#bdcabb, #c3d2c6)",
   },
-  footerItem: { display: "flex", alignItems: "center", gap: 7 },
+  footerItem: { display: "inline-flex", alignItems: "center", gap: 7 },
+  watersBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    fontSize: 11,
+    fontWeight: 600,
+    color: colors.water,
+    backgroundColor: colors.waterBg,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    borderRadius: 999,
+    paddingBlock: 3,
+    paddingInline: 10,
+  },
+  watersBadgeNight: {
+    backgroundColor: "light-dark(#ffffff14, #ffffff12)",
+    borderColor: "light-dark(#ffffff24, #ffffff20)",
+    color: "light-dark(#d8ecec, #bfe3e5)",
+  },
   footerAside: {
-    fontSize: 9,
+    fontSize: 11,
     display: {
-      default: "flex",
+      default: "inline-flex",
       [media.tablet]: "none",
-      [media.mobile]: "flex",
+      [media.mobile]: "inline-flex",
       [media.tiny]: "none",
     },
   },
-  footerArrow: { fontSize: 15, marginLeft: 6 },
+  footerArrow: { fontSize: 14, marginLeft: 4 },
   panel: {
-    paddingBlock: { default: 30, [media.tablet]: 25, [media.mobile]: 27 },
-    paddingInline: { default: 27, [media.tablet]: 21, [media.mobile]: 27 },
+    borderRadius: 24,
+    paddingBlock: { default: 28, [media.tablet]: 24, [media.mobile]: 24 },
+    paddingInline: { default: 26, [media.tablet]: 20, [media.mobile]: 22 },
   },
-  panelEyebrow: { display: "block", marginBottom: 8 },
+  panelEyebrow: { display: "block", marginBottom: 6 },
   panelTitle: {
     fontSize: 27,
     letterSpacing: -0.7,
     marginTop: 0,
     marginInline: 0,
-    marginBottom: 7,
+    marginBottom: 6,
   },
   panelText: {
-    fontSize: 11,
-    color: "light-dark(#92958a, #b9c1ae)",
+    fontSize: 12,
+    color: colors.muted,
     marginTop: 0,
     marginInline: 0,
-    marginBottom: { default: 29, [media.mobile]: 23 },
+    marginBottom: { default: 20, [media.mobile]: 18 },
   },
-  stat: { marginBottom: 24 },
+  statWell: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    borderRadius: 16,
+    paddingBlock: 14,
+    paddingInline: 16,
+    marginBottom: 14,
+  },
   statHeading: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    fontSize: { default: 12, [media.mobile]: 14 },
-    fontWeight: 500,
-    marginBottom: 13,
+    fontSize: 13,
+    fontWeight: 600,
+    color: colors.ink,
+    marginBottom: 10,
   },
   statLabel: { display: "flex", alignItems: "center", gap: 9 },
-  statValue: { fontSize: 11, fontWeight: 500, color: "light-dark(#8b927f, #c5ceb9)" },
+  statValue: {
+    fontFamily: fonts.serif,
+    fontSize: 15,
+    fontWeight: 600,
+    color: colors.ink,
+  },
   statIcon: {
-    width: 31,
-    height: 31,
+    width: 30,
+    height: 30,
     display: "grid",
     placeItems: "center",
-    borderRadius: 10,
+    borderRadius: 9,
   },
   waterIcon: {
-    backgroundColor: "light-dark(#e9f1ef, #304443)",
-    color: "light-dark(#80a9aa, #a9d3cf)",
+    backgroundColor: colors.waterBg,
+    color: colors.water,
   },
   sunIcon: {
-    backgroundColor: "light-dark(#faf0da, #493f2c)",
-    color: "light-dark(#c5a55e, #dfc17d)",
+    backgroundColor: colors.sunBg,
+    color: colors.sun,
   },
   statNote: {
-    color: colors.faint,
-    fontSize: { default: 10, [media.mobile]: 12 },
+    color: colors.muted,
+    fontSize: 11,
     marginTop: 8,
     marginBottom: 0,
   },
@@ -371,22 +456,23 @@ const styles = stylex.create({
     appearance: "none",
     display: "block",
     width: "100%",
-    height: 6,
+    height: 7,
     borderWidth: 0,
-    borderRadius: 10,
+    borderRadius: 999,
     overflow: "hidden",
-    backgroundColor: "light-dark(#eef0e8, #414b38)",
-    "::-webkit-progress-bar": { backgroundColor: "light-dark(#eef0e8, #414b38)" },
+    backgroundColor: "light-dark(#e2e5d8, #384130)",
+    "::-webkit-progress-bar": { backgroundColor: "light-dark(#e2e5d8, #384130)" },
     "::-webkit-progress-value": {
-      backgroundColor: "light-dark(#9abbb4, #91bcb0)",
-      borderRadius: 10,
-      transition: "width 0.5s",
+      backgroundColor: colors.water,
+      borderRadius: 999,
+      transitionProperty: "width",
+      transitionDuration: "0.5s",
     },
-    "::-moz-progress-bar": { backgroundColor: "light-dark(#9abbb4, #91bcb0)" },
+    "::-moz-progress-bar": { backgroundColor: colors.water },
   },
   saveStatus: {
-    minHeight: 15,
-    fontSize: 10,
+    minHeight: 16,
+    fontSize: 11,
     color: colors.faint,
     textAlign: "center",
     marginTop: 8,
@@ -395,60 +481,84 @@ const styles = stylex.create({
   note: {
     display: "flex",
     gap: 12,
-    backgroundColor: "light-dark(#f4f2e8, #34382a)",
+    backgroundColor: colors.surfaceTint,
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "light-dark(#eeebdc, #454e3d)",
-    borderRadius: 13,
-    paddingBlock: 17,
+    borderColor: colors.borderSubtle,
+    borderRadius: 16,
+    paddingBlock: 14,
     paddingInline: 15,
-    marginBlock: 16,
-    color: "light-dark(#a9a47d, #d3c591)",
+    marginBlock: 14,
+    color: colors.mossDark,
   },
   noteIcon: { flexShrink: 0, marginTop: 2 },
   noteTitle: {
-    color: "light-dark(#7e846a, #d2d9b6)",
+    color: colors.ink,
     fontFamily: fonts.serif,
     fontWeight: 500,
     fontSize: 15,
   },
   noteText: {
-    fontSize: { default: 10, [media.mobile]: 12 },
-    lineHeight: 1.8,
-    color: "light-dark(#959783, #c3c9ae)",
-    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 1.65,
+    color: colors.muted,
+    marginTop: 4,
     marginBottom: 0,
+  },
+  journalSection: {
+    marginTop: 18,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: colors.borderSubtle,
   },
   journalTitle: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    fontSize: 11,
-    fontWeight: 500,
+    fontSize: 12,
+    fontWeight: 600,
+    color: colors.ink,
     marginTop: 0,
     marginInline: 0,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   journalLink: {
-    fontSize: 8,
-    letterSpacing: 1,
-    color: { default: "light-dark(#a4a896, #bbc6aa)", ":hover": colors.ink },
+    fontSize: 11,
+    fontWeight: 500,
+    color: { default: colors.mossDark, ":hover": colors.ink },
+    backgroundColor: { default: colors.surfaceSubtle, ":hover": colors.surfaceTint },
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    borderRadius: 999,
+    paddingBlock: 3,
+    paddingInline: 10,
+    textDecoration: "none",
+    transitionProperty: "background-color, color",
+    transitionDuration: "150ms",
   },
-  journalList: { listStyle: "none", padding: 0, margin: 0 },
+  journalList: {
+    listStyle: "none",
+    paddingBlock: 0,
+    paddingInline: 0,
+    marginBlock: 0,
+    marginInline: 0,
+  },
   journalItem: {
     display: "flex",
     alignItems: "baseline",
-    gap: 8,
-    color: "light-dark(#969d8b, #b9c1ae)",
-    fontSize: { default: 10, [media.mobile]: 12 },
-    marginBlock: 10,
-    lineHeight: 1.6,
+    gap: 9,
+    color: colors.muted,
+    fontSize: 11,
+    marginBlock: 8,
+    lineHeight: 1.55,
   },
   journalDot: {
-    width: 4,
-    height: 4,
+    width: 5,
+    height: 5,
     borderRadius: "50%",
-    backgroundColor: "light-dark(#b0ba9c, #9ead88)",
+    backgroundColor: colors.moss,
     flexShrink: 0,
   },
 })

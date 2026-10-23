@@ -61,6 +61,8 @@ html[data-theme="dark"] {
     background: var(--color-background-body);
     line-height: 1.5;
     font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   :where(button, input, a) {
     -webkit-tap-highlight-color: transparent;
@@ -73,14 +75,61 @@ html[data-theme="dark"] {
     outline: 3px solid var(--color-accent);
     outline-offset: 5px;
   }
+  :where([data-island-status]) {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin-block: 10px 0;
+  }
 }
 @media (prefers-reduced-motion: no-preference) {
   @view-transition {
     navigation: auto;
   }
 
+  [data-nav-pill] {
+    view-transition-name: nav-active-pill;
+  }
+  [data-nav-item="garden"] {
+    view-transition-name: nav-item-garden;
+  }
+  [data-nav-item="kanban"] {
+    view-transition-name: nav-item-kanban;
+  }
+  [data-nav-item="journal"] {
+    view-transition-name: nav-item-journal;
+  }
+  [data-nav-item="about"] {
+    view-transition-name: nav-item-about;
+  }
+  [data-nav-item="admin"] {
+    view-transition-name: nav-item-admin;
+  }
+
   ::view-transition-group(root) {
     animation-duration: 150ms;
+  }
+
+  ::view-transition-group(nav-active-pill) {
+    z-index: 1;
+    animation-duration: 280ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  ::view-transition-old(nav-active-pill),
+  ::view-transition-new(nav-active-pill) {
+    height: 100%;
+    border-radius: 999px;
+    overflow: clip;
+  }
+
+  ::view-transition-group(nav-item-garden),
+  ::view-transition-group(nav-item-kanban),
+  ::view-transition-group(nav-item-journal),
+  ::view-transition-group(nav-item-about),
+  ::view-transition-group(nav-item-admin) {
+    z-index: 2;
+    animation-duration: 280ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
 }
 

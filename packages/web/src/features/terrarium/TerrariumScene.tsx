@@ -2,7 +2,8 @@ import { Button } from "@astryxdesign/core/Button"
 import { IconButton } from "@astryxdesign/core/IconButton"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useRef, useState } from "react"
-import { media } from "../../styles/tokens.stylex.ts"
+import { Icon } from "../../components/Icon.tsx"
+import { colors, media } from "../../styles/tokens.stylex.ts"
 import {
   mountTerrarium,
   type SceneController,
@@ -45,6 +46,8 @@ export function TerrariumScene({ sunlight, night, waters }: SceneState) {
             src="/images/terrarium-whimsical.webp"
             width="960"
             height="960"
+            fetchPriority="high"
+            decoding="async"
             alt="A whimsical garden in a glass bowl with pastel plants and mushrooms"
           />
         )}
@@ -57,30 +60,30 @@ export function TerrariumScene({ sunlight, night, waters }: SceneState) {
       <section {...stylex.props(styles.controls)} aria-label="3D view controls">
         <IconButton
           label="Rotate left"
-          icon={<span>↶</span>}
+          icon={<Icon name="rotateCcw" size={16} />}
           isDisabled={!ready}
           onClick={() => controller.current?.rotate(-1)}
         />
         <IconButton
           label="Rotate right"
-          icon={<span>↷</span>}
+          icon={<Icon name="rotateCw" size={16} />}
           isDisabled={!ready}
           onClick={() => controller.current?.rotate(1)}
         />
-        <span {...stylex.props(styles.divider)} />
+        <span {...stylex.props(styles.divider)} aria-hidden="true" />
         <IconButton
           label="Zoom out"
-          icon={<span>−</span>}
+          icon={<Icon name="minus" size={16} />}
           isDisabled={!ready}
           onClick={() => controller.current?.zoom(-1)}
         />
         <IconButton
           label="Zoom in"
-          icon={<span>+</span>}
+          icon={<Icon name="plus" size={16} />}
           isDisabled={!ready}
           onClick={() => controller.current?.zoom(1)}
         />
-        <span {...stylex.props(styles.divider)} />
+        <span {...stylex.props(styles.divider)} aria-hidden="true" />
         <Button
           label={spinning ? "Pause" : "Spin"}
           variant={spinning ? "primary" : "secondary"}
@@ -161,7 +164,8 @@ const styles = stylex.create({
   fallback: {
     position: "absolute",
     inset: 0,
-    margin: "auto",
+    marginBlock: "auto",
+    marginInline: "auto",
     zIndex: 1,
     width: { default: "min(94%, 460px)", [media.mobile]: "min(100%, 430px)" },
     height: "100%",
@@ -171,7 +175,8 @@ const styles = stylex.create({
     animationName: arrive,
     animationDuration: "1s",
     animationTimingFunction: "ease-out",
-    transition: "filter 0.7s",
+    transitionProperty: "filter",
+    transitionDuration: "0.7s",
   },
   fallbackNight: { filter: "brightness(0.72) saturate(0.78)" },
   canvasHost: {
@@ -188,22 +193,32 @@ const styles = stylex.create({
     justifyContent: "center",
     alignItems: "center",
     flexWrap: "wrap",
-    gap: 4,
-    paddingTop: 8,
-    paddingInline: 12,
+    gap: 5,
+    width: "fit-content",
+    maxWidth: "calc(100% - 24px)",
+    marginInline: "auto",
+    marginTop: 6,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    borderRadius: 16,
+    paddingBlock: 6,
+    paddingInline: 8,
+    boxShadow: colors.shadowSm,
   },
   divider: {
     width: 1,
-    height: 16,
-    backgroundColor: "light-dark(#cbd5bf, #57634b)",
+    height: 18,
+    backgroundColor: colors.borderSubtle,
     marginInline: 3,
   },
   hint: {
     textAlign: "center",
     color: "light-dark(#76856b, #c0cdb2)",
-    fontSize: 10,
+    fontSize: 11,
     paddingInline: 20,
-    marginTop: 8,
+    marginTop: 10,
     marginBottom: 0,
   },
   hintNight: { color: "light-dark(#bdcabb, #c3d2c6)" },

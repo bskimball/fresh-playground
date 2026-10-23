@@ -14,5 +14,15 @@ export const text = stylex.create({
   serif: {
     fontFamily: fonts.serif,
     fontWeight: 400,
+    textWrap: "balance",
+  },
+  balance: {
+    textWrap: "balance",
+  },
+  pretty: {
+    textWrap: "pretty",
+  },
+  tabular: {
+    fontVariantNumeric: "tabular-nums",
   },
 })

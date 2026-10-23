@@ -2,6 +2,21 @@ import { randomUUID } from "node:crypto"
 import { Config, Effect, Exit } from "effect"
 import { HttpEffect, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http"
 
+const localOrigin = "http://local.invalid"
+
+/**
+ * Only same-origin paths are followed after sign-in. Parsing the way a browser
+ * does catches `/\evil`, `/%09/evil` and similar tricks that become `//evil`.
+ * The normalized path is checked too: `/..//evil` keeps the origin but
+ * normalizes to `//evil`, which the browser then reads as another host.
+ */
+export const safeNext = (value: string | null) => {
+  if (value === null || !value.startsWith("/")) return "/"
+  const url = URL.parse(value, localOrigin)
+  if (url?.origin !== localOrigin || url.pathname.startsWith("//")) return "/"
+  return `${url.pathname}${url.search}${url.hash}`
+}
+
 export const serverConfig = Config.all({
   environment: Config.Literals(["development", "test", "production"], "NODE_ENV").pipe(
     Config.withDefault("development"),

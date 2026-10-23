@@ -6,8 +6,11 @@ import { TextInput } from "@astryxdesign/core/TextInput"
 import type { SignInMethods } from "@playground/contract"
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, useState } from "react"
+import { defineIsland } from "../../client/hydrateIsland.ts"
 import { AppTheme } from "../../components/AppTheme.tsx"
-import { colors } from "../../styles/tokens.stylex.ts"
+import { Icon } from "../../components/Icon.tsx"
+import { text } from "../../styles/text.ts"
+import { colors, media } from "../../styles/tokens.stylex.ts"
 import { authClient } from "./authClient.ts"
 
 export interface LoginProps {
@@ -16,6 +19,8 @@ export interface LoginProps {
   readonly next: string
   readonly error?: string | undefined
 }
+
+export const loginIsland = defineIsland<LoginProps>("login")
 
 const providerLabels = { google: "Google", microsoft: "Microsoft" } as const
 
@@ -82,6 +87,40 @@ export default function LoginIsland({ methods, next, error }: LoginProps) {
   return (
     <AppTheme>
       <Card xstyle={styles.card}>
+        <header {...stylex.props(styles.header)}>
+          <div {...stylex.props(styles.emblem)} aria-hidden="true">
+            <Icon name="leaf" size={22} />
+          </div>
+          <p {...stylex.props(text.eyebrow, styles.eyebrow)}>CONSERVATORY ACCESS</p>
+          <h1 {...stylex.props(text.serif, styles.title)}>
+            {mode === "signIn" ? "Welcome back" : "Join the garden"}
+          </h1>
+          <p {...stylex.props(styles.subtitle, text.pretty)}>
+            Sign in to tend shared spaces and sync your preferences.
+          </p>
+        </header>
+
+        {methods.password && (
+          <div {...stylex.props(styles.modeTrack)} role="group" aria-label="Account mode">
+            <button
+              type="button"
+              aria-pressed={mode === "signIn"}
+              onClick={() => setMode("signIn")}
+              {...stylex.props(styles.modeTab, mode === "signIn" && styles.modeTabActive)}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "signUp"}
+              onClick={() => setMode("signUp")}
+              {...stylex.props(styles.modeTab, mode === "signUp" && styles.modeTabActive)}
+            >
+              Create account
+            </button>
+          </div>
+        )}
+
         {status.kind === "failed" && <Banner status="error" title={status.message} />}
         {status.kind === "sent" && (
           <Banner
@@ -185,7 +224,85 @@ export default function LoginIsland({ methods, next, error }: LoginProps) {
 }
 
 const styles = stylex.create({
-  card: { display: "grid", gap: 18, maxWidth: 400, marginInline: "auto" },
+  card: {
+    display: "grid",
+    gap: 20,
+    maxWidth: 440,
+    marginInline: "auto",
+    paddingBlock: { default: 32, [media.mobile]: 24 },
+    paddingInline: { default: 32, [media.mobile]: 22 },
+    borderRadius: 24,
+  },
+  header: {
+    display: "grid",
+    gap: 8,
+    justifyItems: "center",
+    textAlign: "center",
+  },
+  emblem: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    display: "grid",
+    placeItems: "center",
+    backgroundColor: colors.surfaceTint,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    color: colors.mossDark,
+    marginBottom: 4,
+  },
+  eyebrow: {
+    marginBottom: 0,
+  },
+  title: {
+    fontSize: 34,
+    letterSpacing: -1,
+    lineHeight: 1.1,
+    margin: 0,
+  },
+  subtitle: {
+    margin: 0,
+    fontSize: 13,
+    lineHeight: 1.6,
+    color: colors.muted,
+    maxWidth: 320,
+  },
+  modeTrack: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 4,
+    padding: 4,
+    borderRadius: 999,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+  },
+  modeTab: {
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "transparent",
+    backgroundColor: "transparent",
+    color: colors.muted,
+    font: "inherit",
+    fontSize: 12,
+    fontWeight: 500,
+    paddingBlock: 7,
+    paddingInline: 12,
+    borderRadius: 999,
+    cursor: "pointer",
+    transform: { default: "none", ":active": "scale(0.96)" },
+    transition:
+      "background-color 0.15s ease-out, border-color 0.15s ease-out, color 0.15s ease-out, box-shadow 0.15s ease-out, transform 0.1s ease-out",
+  },
+  modeTabActive: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.borderSubtle,
+    boxShadow: colors.shadowSm,
+    color: colors.ink,
+    fontWeight: 600,
+  },
   stack: { display: "grid", gap: 12 },
   switch: { margin: 0, fontSize: 13, color: colors.muted, textAlign: "center" },
   link: {
@@ -194,6 +311,7 @@ const styles = stylex.create({
     backgroundColor: "transparent",
     color: colors.mossDark,
     font: "inherit",
+    fontWeight: 600,
     textDecoration: "underline",
     cursor: "pointer",
   },

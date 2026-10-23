@@ -1,17 +1,49 @@
 import { createHash } from "node:crypto"
-import { readFileSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { Layer } from "effect"
+import { Effect, Layer, Schedule, Stream } from "effect"
 import { HttpRouter, HttpServerResponse, HttpStaticServer } from "effect/http"
-import type { Assets } from "./pages.tsx"
-import { pwaRoutes } from "./Pwa.ts"
+import type { Assets, ClientEntryName, RouteEntryAssets } from "./pages.tsx"
+import { type PwaOptions, pwaRoutes } from "./Pwa.ts"
 
-/** Reads the production build once and keeps its URLs and serving policy together. */
-export function loadAssets() {
-  const immutable = "public, max-age=31536000, immutable"
-  const clientDir = fileURLToPath(new URL("../client/", import.meta.url))
-  const manifest: Record<string, { file: string; imports?: string[]; dynamicImports?: string[] }> =
-    JSON.parse(readFileSync(`${clientDir}.vite/manifest.json`, "utf8"))
+interface ManifestEntry {
+  readonly file: string
+  readonly imports?: ReadonlyArray<string>
+  readonly dynamicImports?: ReadonlyArray<string>
+}
+
+type Manifest = Record<string, ManifestEntry>
+
+const clientEntryNames: ReadonlyArray<ClientEntryName> = [
+  "garden",
+  "kanban",
+  "about",
+  "login",
+  "admin",
+]
+
+const offlineRouteEntries: ReadonlyArray<ClientEntryName> = ["garden", "kanban", "about"]
+
+interface AssetSnapshot {
+  readonly mtimeMs: number
+  readonly css: string
+  readonly cssPath: string
+  readonly fonts: ReadonlyArray<string>
+  readonly performance: string
+  readonly entries: ReadonlyMap<ClientEntryName, RouteEntryAssets>
+  readonly pwa: PwaOptions
+}
+
+const buildSnapshot = (clientDir: string, mtimeMs: number): AssetSnapshot => {
+  const manifest: Manifest = JSON.parse(readFileSync(`${clientDir}.vite/manifest.json`, "utf8"))
+
+  const resolveSource = (name: string) => {
+    for (const candidate of [`src/client/${name}.tsx`, `src/client/${name}.ts`, name]) {
+      if (manifest[candidate]) return candidate
+    }
+    throw new Error(`${name} is missing from the client build manifest`)
+  }
+
   const asset = (source: string) => {
     const entry = manifest[source]
     if (!entry) throw new Error(`${source} is missing from the client build manifest`)
@@ -22,9 +54,14 @@ export function loadAssets() {
   const css =
     readFileSync(`${clientDir}${asset("style.css").slice(1)}`, "utf8") +
     readFileSync(new URL("./assets/stylex.css", import.meta.url), "utf8")
-  const cssPath: HttpRouter.PathInput = `/assets/style-${createHash("sha256").update(css).digest("hex").slice(0, 12)}.css`
+  const cssHash = createHash("sha256").update(css).digest("hex").slice(0, 12)
+  const cssPath = `/assets/style-${cssHash}.css`
 
-  const preloads = (source: string) => {
+  const fonts = Object.entries(manifest)
+    .filter(([src]) => src.endsWith("-latin-wght-normal.woff2"))
+    .map(([, entry]) => `/${entry.file}`)
+
+  const preloads = (source: string): ReadonlyArray<string> => {
     const seen = new Set<string>()
     const visit = (key: string) => {
       for (const dependency of manifest[key]?.imports ?? []) {
@@ -34,65 +71,152 @@ export function loadAssets() {
       }
     }
     visit(source)
-    if (source === "src/client/garden.tsx") {
-      for (const dependency of manifest[source]?.dynamicImports ?? []) {
-        seen.add(dependency)
-        visit(dependency)
-      }
-    }
     return [...seen].map(asset)
   }
-  const pages: Assets = {
-    css: cssPath,
-    garden: asset("src/client/garden.tsx"),
-    about: asset("src/client/about.ts"),
-    login: asset("src/client/login.tsx"),
-    admin: asset("src/client/admin.tsx"),
-    performance: asset("src/client/performance.ts"),
-    preloads: {
-      garden: preloads("src/client/garden.tsx"),
-      about: preloads("src/client/about.ts"),
-      login: preloads("src/client/login.tsx"),
-      admin: preloads("src/client/admin.tsx"),
-    },
+
+  const entries = new Map<ClientEntryName, RouteEntryAssets>()
+  for (const name of clientEntryNames) {
+    const source = resolveSource(name)
+    entries.set(name, {
+      script: asset(source),
+      preloads: preloads(source),
+    })
   }
-  const swFile = asset("src/client/sw.ts").slice(1)
-  const rawStyleFile = asset("style.css").slice(1)
+
+  const performanceSource = resolveSource("performance")
+  const performance = asset(performanceSource)
+  const performancePreloads = preloads(performanceSource)
+
+  const swFile = asset(resolveSource("sw")).slice(1)
   const swScript = readFileSync(`${clientDir}${swFile}`, "utf8")
+
+  // Precache only the core shell and offline-warmed route chunks on install;
+  // heavy or auth-only chunks (Three.js, admin, login) cache on demand via fetch.
   const pwaAssets = [
-    cssPath,
-    "/icon.svg",
-    "/manifest.webmanifest",
-    "/images/terrarium-whimsical.webp",
-    ...new Set(
-      Object.values(manifest)
-        .map((entry) => entry.file)
-        .filter((file) => file !== swFile && file !== rawStyleFile)
-        .map((file) => `/${file}`),
-    ),
+    ...new Set([
+      cssPath,
+      "/icon.svg",
+      "/manifest.webmanifest",
+      "/images/terrarium-whimsical.webp",
+      ...fonts,
+      performance,
+      ...performancePreloads,
+      ...offlineRouteEntries.flatMap((name) => {
+        const route = entries.get(name)
+        return route ? [route.script, ...route.preloads] : []
+      }),
+    ]),
   ]
+
+  const allManifestFiles = Object.values(manifest)
+    .map((entry) => entry.file)
+    .sort()
+    .join("\n")
+
   const pwaVersion = createHash("sha256")
     .update(swScript)
-    .update(pwaAssets.join("\n"))
+    .update(cssHash)
+    .update(allManifestFiles)
     .digest("hex")
     .slice(0, 12)
+
+  return {
+    mtimeMs,
+    css,
+    cssPath,
+    fonts,
+    performance,
+    entries,
+    pwa: { version: pwaVersion, script: swScript, assets: pwaAssets },
+  }
+}
+
+/** Reads the client build and keeps its URLs and serving policy together. */
+export function loadAssets(options?: { readonly devReload?: boolean }) {
+  const devReload = options?.devReload ?? false
+  const immutable = "public, max-age=31536000, immutable"
+  const clientDir = fileURLToPath(new URL("../client/", import.meta.url))
+  const manifestPath = `${clientDir}.vite/manifest.json`
+
+  let current = buildSnapshot(clientDir, statSync(manifestPath).mtimeMs)
+
+  const getSnapshot = (): AssetSnapshot => {
+    if (!devReload) return current
+    try {
+      const mtimeMs = statSync(manifestPath).mtimeMs
+      if (mtimeMs !== current.mtimeMs) {
+        current = buildSnapshot(clientDir, mtimeMs)
+      }
+    } catch {
+      // Keep serving the previous snapshot if Vite is mid-write.
+    }
+    return current
+  }
+
+  const pages: Assets = {
+    get css() {
+      return getSnapshot().cssPath
+    },
+    get fonts() {
+      return getSnapshot().fonts
+    },
+    get performance() {
+      return getSnapshot().performance
+    },
+    devReload,
+    entry(name) {
+      const found = getSnapshot().entries.get(name)
+      if (!found) throw new Error(`Unknown client entry "${name}"`)
+      return found
+    },
+  }
+
+  const encoder = new TextEncoder()
+  const devReloadRoute = devReload
+    ? HttpRouter.add(
+        "GET",
+        "/__dev/reload",
+        Effect.sync(() => {
+          const stream = Stream.fromSchedule(Schedule.spaced("400 millis")).pipe(
+            Stream.prepend([0]),
+            Stream.map(() => getSnapshot().pwa.version),
+            Stream.changes,
+            Stream.map((version) => encoder.encode(`event: build\ndata: ${version}\n\n`)),
+          )
+          return HttpServerResponse.stream(stream, {
+            contentType: "text/event-stream; charset=utf-8",
+            headers: {
+              "cache-control": "no-cache",
+              connection: "keep-alive",
+            },
+          })
+        }),
+      )
+    : Layer.empty
 
   const routes = Layer.mergeAll(
     HttpRouter.add(
       "GET",
-      cssPath,
-      HttpServerResponse.text(css, {
-        contentType: "text/css; charset=utf-8",
-        headers: { "cache-control": immutable },
-      }),
+      "/assets/style-:hash.css",
+      Effect.sync(() =>
+        HttpServerResponse.text(getSnapshot().css, {
+          contentType: "text/css; charset=utf-8",
+          headers: { "cache-control": immutable },
+        }),
+      ),
     ),
-    pwaRoutes({ version: pwaVersion, script: swScript, assets: pwaAssets }),
+    devReloadRoute,
+    pwaRoutes(() => getSnapshot().pwa),
     HttpStaticServer.layer({
       root: `${clientDir}assets`,
       prefix: "/assets",
       cacheControl: immutable,
     }),
-    HttpStaticServer.layer({ root: `${clientDir}images`, prefix: "/images" }),
+    HttpStaticServer.layer({
+      root: `${clientDir}images`,
+      prefix: "/images",
+      cacheControl: "public, max-age=86400",
+    }),
   )
   return { pages, routes }
 }

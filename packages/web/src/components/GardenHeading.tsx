@@ -1,27 +1,34 @@
 import * as stylex from "@stylexjs/stylex"
 import { text } from "../styles/text.ts"
-import { fonts, media } from "../styles/tokens.stylex.ts"
+import { colors, fonts, media } from "../styles/tokens.stylex.ts"
 import { Icon } from "./Icon.tsx"
 
 export function GardenHeading() {
   return (
     <div {...stylex.props(styles.heading)}>
-      <div>
-        <p {...stylex.props(text.eyebrow)}>YOUR DAILY DOSE OF GREEN</p>
+      <div {...stylex.props(styles.copy)}>
+        <span {...stylex.props(text.eyebrow, styles.eyebrowBadge)}>
+          <Icon name="spark" size={12} />
+          <span>YOUR DAILY DOSE OF GREEN</span>
+        </span>
         <h1 {...stylex.props(text.serif, styles.title)}>
           A little garden.
           <br />A little <em {...stylex.props(styles.emphasis)}>pause.</em>
         </h1>
-        <p {...stylex.props(styles.intro)}>
-          Good things grow with a little care. Take a breath,
-          <br /> check on your plants, and make yourself at home.
+        <p {...stylex.props(text.pretty, styles.intro)}>
+          Good things grow with a little care. Take a breath, check on your plants, and make
+          yourself at home.
         </p>
       </div>
-      <div {...stylex.props(styles.stamp)}>
-        <Icon name="sun" size={30} />
-        <span>Small beginnings</span>
-        <strong {...stylex.props(styles.stampStrong)}>Wonderful possibilities</strong>
-      </div>
+      <aside {...stylex.props(styles.almanacCard)} aria-label="Conservatory almanac note">
+        <span {...stylex.props(styles.almanacMedallion)}>
+          <Icon name="sun" size={22} />
+        </span>
+        <div {...stylex.props(styles.almanacText)}>
+          <span {...stylex.props(styles.almanacKicker)}>Small beginnings</span>
+          <strong {...stylex.props(styles.almanacStrong)}>Wonderful possibilities</strong>
+        </div>
+      </aside>
     </div>
   )
 }
@@ -30,40 +37,89 @@ const styles = stylex.create({
   heading: {
     display: "flex",
     justifyContent: "space-between",
+    alignItems: "flex-end",
+    gap: 24,
+    marginBottom: { default: 32, [media.wide]: 40, [media.mobile]: 24 },
+  },
+  copy: {
+    maxWidth: 560,
+  },
+  eyebrowBadge: {
+    display: "inline-flex",
     alignItems: "center",
-    marginBottom: { default: 35, [media.wide]: 43, [media.mobile]: 26 },
+    gap: 6,
+    paddingBlock: 5,
+    paddingInline: 11,
+    borderRadius: 999,
+    backgroundColor: colors.surfaceTint,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    color: colors.mossDark,
+    marginBottom: 16,
   },
   title: {
-    fontSize: { default: "clamp(40px, 4.7vw, 62px)", [media.mobile]: 46 },
-    lineHeight: 1.08,
-    letterSpacing: -2.5,
+    fontSize: { default: "clamp(40px, 4.7vw, 62px)", [media.mobile]: 42 },
+    lineHeight: 1.06,
+    letterSpacing: -2.2,
     marginTop: 0,
     marginInline: 0,
-    marginBottom: 18,
+    marginBottom: 16,
   },
-  emphasis: { fontWeight: 400, color: "light-dark(#8b9a69, #bbc99b)" },
-  intro: {
-    fontSize: { default: 14, [media.mobile]: 12 },
-    lineHeight: 1.8,
-    color: "light-dark(#7f8579, #b9c1ae)",
-    margin: 0,
-  },
-  stamp: {
-    display: { default: "flex", [media.mobile]: "none" },
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 7,
-    color: "light-dark(#919771, #b9c5a0)",
-    fontSize: 12,
-    paddingTop: 25,
-    paddingLeft: 32,
-    paddingRight: { default: 32, [media.tablet]: 12 },
-    transform: "rotate(5deg)",
-  },
-  stampStrong: {
-    fontFamily: fonts.serif,
-    fontSize: 16,
+  emphasis: {
     fontWeight: 400,
-    color: "light-dark(#6b795b, #b4c99a)",
+    color: colors.olive,
+  },
+  intro: {
+    fontSize: { default: 15, [media.mobile]: 14 },
+    lineHeight: 1.65,
+    color: colors.muted,
+    maxWidth: 500,
+    marginBlock: 0,
+    marginInline: 0,
+  },
+  almanacCard: {
+    display: { default: "flex", [media.mobile]: "none" },
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    borderRadius: 18,
+    paddingBlock: 14,
+    paddingInline: 18,
+    boxShadow: colors.shadowSm,
+    flexShrink: 0,
+  },
+  almanacMedallion: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    display: "grid",
+    placeItems: "center",
+    backgroundColor: colors.sunBg,
+    color: colors.sun,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    flexShrink: 0,
+  },
+  almanacText: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  },
+  almanacKicker: {
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: 0.4,
+    color: colors.muted,
+  },
+  almanacStrong: {
+    fontFamily: fonts.serif,
+    fontSize: 17,
+    fontWeight: 400,
+    color: colors.mossDark,
   },
 })
