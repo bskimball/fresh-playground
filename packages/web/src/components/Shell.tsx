@@ -3,23 +3,15 @@ import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
 import { text } from "../styles/text.ts"
 import { colors, fonts, media } from "../styles/tokens.stylex.ts"
-import { Icon, type IconName } from "./Icon.tsx"
+import { Icon } from "./Icon.tsx"
+import { navLinks, publicLinks, type Section } from "./sections.ts"
 import { ThemeToggle } from "./ThemeToggle.tsx"
-
-export type Section = "garden" | "kanban" | "journal" | "about" | "admin" | "login"
 
 /** Who is signed in, and whether they may open `/admin`. */
 export interface Viewer {
   readonly user: SessionUser
   readonly isAdmin: boolean
 }
-
-const links: ReadonlyArray<{ section: Section; href: string; label: string; icon: IconName }> = [
-  { section: "garden", href: "/", label: "Garden", icon: "leaf" },
-  { section: "kanban", href: "/kanban", label: "Kanban", icon: "board" },
-  { section: "journal", href: "/journal", label: "Journal", icon: "book" },
-  { section: "about", href: "/about", label: "About", icon: "compass" },
-]
 
 /** Server-rendered page chrome. It never hydrates. */
 export function Shell({
@@ -31,12 +23,7 @@ export function Shell({
   viewer?: Viewer | undefined
   children?: ReactNode
 }) {
-  const nav = viewer?.isAdmin
-    ? [
-        ...links,
-        { section: "admin" as const, href: "/admin", label: "Admin", icon: "shield" as const },
-      ]
-    : links
+  const nav = navLinks(viewer?.isAdmin ?? false)
   return (
     <>
       <header {...stylex.props(styles.header)}>
@@ -124,7 +111,7 @@ export function Shell({
           </div>
           <div {...stylex.props(styles.footerRight)}>
             <nav aria-label="Footer" {...stylex.props(styles.footerNav)}>
-              {links.map((link) => (
+              {publicLinks.map((link) => (
                 <a key={link.section} href={link.href} {...stylex.props(styles.footerLink)}>
                   {link.label}
                 </a>

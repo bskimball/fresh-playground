@@ -7,7 +7,6 @@ import * as stylex from "@stylexjs/stylex"
 import { useActorRef, useSelector } from "@xstate/react"
 import { useEffect } from "react"
 import { defineIsland } from "../../client/hydrateIsland.ts"
-import { AppTheme } from "../../components/AppTheme.tsx"
 import { Icon } from "../../components/Icon.tsx"
 import { schemaJsonCodec } from "../../machines/offlineSync.ts"
 import { text } from "../../styles/text.ts"
@@ -42,10 +41,12 @@ const formatSyncStatus = (
   return ""
 }
 
-export const terrariumIsland = defineIsland("terrarium", schemaJsonCodec(Garden))
+export const terrariumIsland = defineIsland("terrarium", TerrariumIsland, {
+  codec: schemaJsonCodec(Garden),
+})
 
 /** Hydrated island. The server seeds it with the garden it just loaded. */
-export default function TerrariumIsland({ garden: initial }: { garden: Garden }) {
+export default function TerrariumIsland(initial: Garden) {
   const care = useActorRef(careMachine, { input: { garden: initial } })
   useEffect(() => {
     const offline = loadOfflineSnapshot()
@@ -75,157 +76,154 @@ export default function TerrariumIsland({ garden: initial }: { garden: Garden })
   const saturated = garden.moisture >= SATURATED_AT
 
   return (
-    <AppTheme>
-      <div {...stylex.props(styles.layout)}>
-        <section
-          {...stylex.props(styles.stage, night && styles.stageNight)}
-          aria-label="Your terrarium"
-        >
-          <div {...stylex.props(styles.stageTop)}>
-            <span {...stylex.props(styles.livePill, night && styles.livePillNight)}>
-              <span {...stylex.props(styles.liveDot)} />
-              {night ? "RESTING PEACEFULLY" : "HAPPILY GROWING"}
+    <div {...stylex.props(styles.layout)}>
+      <section
+        {...stylex.props(styles.stage, night && styles.stageNight)}
+        aria-label="Your terrarium"
+      >
+        <div {...stylex.props(styles.stageTop)}>
+          <span {...stylex.props(styles.livePill, night && styles.livePillNight)}>
+            <span {...stylex.props(styles.liveDot)} />
+            {night ? "RESTING PEACEFULLY" : "HAPPILY GROWING"}
+          </span>
+          <div {...stylex.props(styles.modeControl)}>
+            <span {...stylex.props(styles.modeLabel, night && styles.dimNight)}>
+              {night ? "Nightfall" : "Daylight"}
             </span>
-            <div {...stylex.props(styles.modeControl)}>
-              <span {...stylex.props(styles.modeLabel, night && styles.dimNight)}>
-                {night ? "Nightfall" : "Daylight"}
-              </span>
-              <IconButton
-                label={night ? "Switch to daytime" : "Switch to nighttime"}
-                icon={<Icon name={night ? "moon" : "sun"} size={18} />}
-                onClick={() => care.send({ type: "TOGGLE_NIGHT" })}
-                aria-pressed={night}
-              />
-            </div>
+            <IconButton
+              label={night ? "Switch to daytime" : "Switch to nighttime"}
+              icon={<Icon name={night ? "moon" : "sun"} size={18} />}
+              onClick={() => care.send({ type: "TOGGLE_NIGHT" })}
+              aria-pressed={night}
+            />
           </div>
-          <TerrariumScene sunlight={sunlight} night={night} waters={garden.waters} />
-          <div {...stylex.props(styles.caption)}>
-            <span {...stylex.props(text.eyebrow, styles.captionEyebrow, night && styles.dimNight)}>
-              A WORLD OF YOUR OWN
+        </div>
+        <TerrariumScene sunlight={sunlight} night={night} waters={garden.waters} />
+        <div {...stylex.props(styles.caption)}>
+          <span {...stylex.props(text.eyebrow, styles.captionEyebrow, night && styles.dimNight)}>
+            A WORLD OF YOUR OWN
+          </span>
+          <h2 {...stylex.props(text.serif, styles.captionTitle)}>The little grove</h2>
+          <p
+            {...stylex.props(text.pretty, styles.captionText, night && styles.dimNight)}
+            aria-live="polite"
+          >
+            {message}
+          </p>
+        </div>
+        <div {...stylex.props(styles.stageFooter, night && styles.stageFooterNight)}>
+          <span {...stylex.props(styles.footerItem)}>
+            <Icon name="leaf" size={15} /> A miniature woodland
+          </span>
+          <span
+            {...stylex.props(text.tabular, styles.watersBadge, night && styles.watersBadgeNight)}
+          >
+            <Icon name="drop" size={13} />
+            Watered {garden.waters} {garden.waters === 1 ? "time" : "times"}
+          </span>
+          <span {...stylex.props(styles.footerItem, styles.footerAside)}>
+            Made for quiet moments{" "}
+            <span {...stylex.props(styles.footerArrow)} aria-hidden="true">
+              ↗
             </span>
-            <h2 {...stylex.props(text.serif, styles.captionTitle)}>The little grove</h2>
-            <p
-              {...stylex.props(text.pretty, styles.captionText, night && styles.dimNight)}
-              aria-live="polite"
-            >
-              {message}
+          </span>
+        </div>
+      </section>
+
+      <Card xstyle={styles.panel} role="complementary" aria-label="Garden care">
+        <span {...stylex.props(text.eyebrow, styles.panelEyebrow)}>A LITTLE TLC</span>
+        <h2 {...stylex.props(text.serif, styles.panelTitle)}>How’s it growing?</h2>
+        <p {...stylex.props(styles.panelText)}>Your tiny ecosystem is in good hands.</p>
+
+        <div {...stylex.props(styles.statWell)}>
+          <div {...stylex.props(styles.statHeading)}>
+            <span {...stylex.props(styles.statLabel)}>
+              <span {...stylex.props(styles.statIcon, styles.waterIcon)}>
+                <Icon name="drop" size={17} />
+              </span>
+              Soil moisture
+            </span>
+            <strong {...stylex.props(text.tabular, styles.statValue)}>{garden.moisture}%</strong>
+          </div>
+          <progress
+            {...stylex.props(styles.meter)}
+            value={garden.moisture}
+            max={100}
+            aria-label="Soil moisture"
+          />
+          <p {...stylex.props(styles.statNote)}>{moistureNote(garden.moisture)}</p>
+        </div>
+
+        <div {...stylex.props(styles.statWell)}>
+          <div {...stylex.props(styles.statHeading)}>
+            <span {...stylex.props(styles.statLabel)}>
+              <span {...stylex.props(styles.statIcon, styles.sunIcon)}>
+                <Icon name="sun" size={17} />
+              </span>
+              Sunlight
+            </span>
+            <strong {...stylex.props(text.tabular, styles.statValue)}>
+              {night ? "Resting" : `${sunlight}%`}
+            </strong>
+          </div>
+          <Slider
+            label="Sunlight"
+            isLabelHidden
+            min={10}
+            max={100}
+            value={sunlight}
+            isDisabled={night}
+            onChange={(value: number) => care.send({ type: "SET_SUNLIGHT", sunlight: value })}
+            formatValue={(value) => `${value} percent`}
+            valueDisplay="none"
+          />
+          <p {...stylex.props(styles.statNote)}>{sunlightNote(sunlight, night)}</p>
+        </div>
+
+        <Button
+          label={pouring ? "Watering…" : saturated ? "All watered for now" : "Water your garden"}
+          variant="primary"
+          size="lg"
+          width="100%"
+          icon={<Icon name="drop" size={18} />}
+          onClick={() => care.send({ type: "WATER" })}
+          isDisabled={saturated || pouring}
+          isLoading={pouring}
+        />
+        <p {...stylex.props(styles.saveStatus)} role="status">
+          {formatSyncStatus(settings, watering)}
+        </p>
+
+        <div {...stylex.props(styles.note)}>
+          <span {...stylex.props(styles.noteIcon)}>
+            <Icon name="spark" size={20} />
+          </span>
+          <div>
+            <strong {...stylex.props(styles.noteTitle)}>No rush. Just grow.</strong>
+            <p {...stylex.props(text.pretty, styles.noteText)}>
+              A little attention goes a long way. Your garden is a place to enjoy the small things.
             </p>
           </div>
-          <div {...stylex.props(styles.stageFooter, night && styles.stageFooterNight)}>
-            <span {...stylex.props(styles.footerItem)}>
-              <Icon name="leaf" size={15} /> A miniature woodland
-            </span>
-            <span
-              {...stylex.props(text.tabular, styles.watersBadge, night && styles.watersBadgeNight)}
-            >
-              <Icon name="drop" size={13} />
-              Watered {garden.waters} {garden.waters === 1 ? "time" : "times"}
-            </span>
-            <span {...stylex.props(styles.footerItem, styles.footerAside)}>
-              Made for quiet moments{" "}
-              <span {...stylex.props(styles.footerArrow)} aria-hidden="true">
-                ↗
-              </span>
-            </span>
-          </div>
-        </section>
+        </div>
 
-        <Card xstyle={styles.panel} role="complementary" aria-label="Garden care">
-          <span {...stylex.props(text.eyebrow, styles.panelEyebrow)}>A LITTLE TLC</span>
-          <h2 {...stylex.props(text.serif, styles.panelTitle)}>How’s it growing?</h2>
-          <p {...stylex.props(styles.panelText)}>Your tiny ecosystem is in good hands.</p>
-
-          <div {...stylex.props(styles.statWell)}>
-            <div {...stylex.props(styles.statHeading)}>
-              <span {...stylex.props(styles.statLabel)}>
-                <span {...stylex.props(styles.statIcon, styles.waterIcon)}>
-                  <Icon name="drop" size={17} />
-                </span>
-                Soil moisture
-              </span>
-              <strong {...stylex.props(text.tabular, styles.statValue)}>{garden.moisture}%</strong>
-            </div>
-            <progress
-              {...stylex.props(styles.meter)}
-              value={garden.moisture}
-              max={100}
-              aria-label="Soil moisture"
-            />
-            <p {...stylex.props(styles.statNote)}>{moistureNote(garden.moisture)}</p>
-          </div>
-
-          <div {...stylex.props(styles.statWell)}>
-            <div {...stylex.props(styles.statHeading)}>
-              <span {...stylex.props(styles.statLabel)}>
-                <span {...stylex.props(styles.statIcon, styles.sunIcon)}>
-                  <Icon name="sun" size={17} />
-                </span>
-                Sunlight
-              </span>
-              <strong {...stylex.props(text.tabular, styles.statValue)}>
-                {night ? "Resting" : `${sunlight}%`}
-              </strong>
-            </div>
-            <Slider
-              label="Sunlight"
-              isLabelHidden
-              min={10}
-              max={100}
-              value={sunlight}
-              isDisabled={night}
-              onChange={(value: number) => care.send({ type: "SET_SUNLIGHT", sunlight: value })}
-              formatValue={(value) => `${value} percent`}
-              valueDisplay="none"
-            />
-            <p {...stylex.props(styles.statNote)}>{sunlightNote(sunlight, night)}</p>
-          </div>
-
-          <Button
-            label={pouring ? "Watering…" : saturated ? "All watered for now" : "Water your garden"}
-            variant="primary"
-            size="lg"
-            width="100%"
-            icon={<Icon name="drop" size={18} />}
-            onClick={() => care.send({ type: "WATER" })}
-            isDisabled={saturated || pouring}
-            isLoading={pouring}
-          />
-          <p {...stylex.props(styles.saveStatus)} role="status">
-            {formatSyncStatus(settings, watering)}
-          </p>
-
-          <div {...stylex.props(styles.note)}>
-            <span {...stylex.props(styles.noteIcon)}>
-              <Icon name="spark" size={20} />
-            </span>
-            <div>
-              <strong {...stylex.props(styles.noteTitle)}>No rush. Just grow.</strong>
-              <p {...stylex.props(text.pretty, styles.noteText)}>
-                A little attention goes a long way. Your garden is a place to enjoy the small
-                things.
-              </p>
-            </div>
-          </div>
-
-          <div {...stylex.props(styles.journalSection)}>
-            <h3 {...stylex.props(styles.journalTitle)}>
-              <span>Little moments</span>
-              <a href="/journal" {...stylex.props(styles.journalLink)}>
-                View journal →
-              </a>
-            </h3>
-            <ul {...stylex.props(styles.journalList)}>
-              {garden.journal.slice(0, 3).map((entry) => (
-                <li key={entry.id} {...stylex.props(styles.journalItem)}>
-                  <span {...stylex.props(styles.journalDot)} />
-                  <span {...stylex.props(text.pretty)}>{entry.text}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </Card>
-      </div>
-    </AppTheme>
+        <div {...stylex.props(styles.journalSection)}>
+          <h3 {...stylex.props(styles.journalTitle)}>
+            <span>Little moments</span>
+            <a href="/journal" {...stylex.props(styles.journalLink)}>
+              View journal →
+            </a>
+          </h3>
+          <ul {...stylex.props(styles.journalList)}>
+            {garden.journal.slice(0, 3).map((entry) => (
+              <li key={entry.id} {...stylex.props(styles.journalItem)}>
+                <span {...stylex.props(styles.journalDot)} />
+                <span {...stylex.props(text.pretty)}>{entry.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Card>
+    </div>
   )
 }
 

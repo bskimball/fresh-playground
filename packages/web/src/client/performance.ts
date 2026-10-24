@@ -1,4 +1,5 @@
 import "vite/modulepreload-polyfill"
+import "../styles/global.css"
 import type { Metric } from "web-vitals"
 import {
   applyThemePreference,
@@ -8,8 +9,47 @@ import {
   type StoredNavPillRect,
   syncThemeFromCookie,
 } from "../components/themeDom.ts"
+import type { RegisteredIsland } from "./hydrateIsland.ts"
+import { type IslandName, islandRegistry } from "./islandRegistry.ts"
+
+const mountIsland = (root: HTMLElement, load: () => Promise<RegisteredIsland>) => {
+  void load()
+    .then((island) => {
+      island.boot(root)
+    })
+    .catch((error: unknown) => {
+      const name = root.dataset.island ?? "unknown"
+      console.error(`Island "${name}" failed to load`, error)
+      root.inert = true
+      root.removeAttribute("aria-busy")
+      const status = document.querySelector<HTMLElement>(`[data-island-status="${name}"]`)
+      if (status) {
+        status.hidden = false
+        status.textContent = "Interactive controls could not load. Reload the page to try again."
+      }
+    })
+}
+
+const bootIslands = () => {
+  for (const root of document.querySelectorAll<HTMLElement>("[data-island]")) {
+    const name = root.dataset.island
+    if (!name || !Object.hasOwn(islandRegistry, name)) continue
+    const { load } = islandRegistry[name as IslandName]
+    if (root.dataset.hydrate === "visible" && typeof IntersectionObserver !== "undefined") {
+      const observer = new IntersectionObserver((entries) => {
+        if (!entries.some((item) => item.isIntersecting)) return
+        observer.disconnect()
+        mountIsland(root, load)
+      })
+      observer.observe(root)
+    } else {
+      mountIsland(root, load)
+    }
+  }
+}
 
 syncThemeFromCookie()
+bootIslands()
 
 const themeRoot = document.querySelector<HTMLElement>('[data-island="theme-toggle"]')
 themeRoot?.addEventListener("click", () => {
@@ -116,20 +156,12 @@ document.querySelector<HTMLElement>("[data-main-nav]")?.addEventListener("click"
   }
 })
 
-if (
-  document.documentElement.hasAttribute("data-dev-reload") &&
-  typeof EventSource !== "undefined"
-) {
-  let activeBuildId: string | null = null
-  const events = new EventSource("/__dev/reload")
-  events.addEventListener("build", (event) => {
-    const nextId = (event as MessageEvent<string>).data
-    if (activeBuildId !== null && activeBuildId !== nextId) {
-      window.location.reload()
-      return
-    }
-    activeBuildId = nextId
-  })
+// `vp dev` serves source modules; a worker left by a production run on this origin
+// would answer with stale pages and chunks.
+if (import.meta.env.DEV) {
+  void navigator.serviceWorker
+    ?.getRegistrations()
+    .then((registrations) => Promise.all(registrations.map((worker) => worker.unregister())))
 }
 
 const route = location.pathname
@@ -155,7 +187,7 @@ const report = ({ name, value, id, rating }: Metric) => {
 
 const start = () => {
   const collect = () => {
-    void navigator.serviceWorker?.register("/sw.js").catch(() => {})
+    if (import.meta.env.PROD) void navigator.serviceWorker?.register("/sw.js").catch(() => {})
     void import("web-vitals")
       .then(({ onLCP, onINP, onCLS }) => {
         onLCP(report)

@@ -11,18 +11,23 @@ interface ServiceWorkerScope {
   readonly location: Location
   readonly caches: CacheStorage
   readonly clients: { claim(): Promise<void> }
-  readonly __PWA__?: { readonly version: string; readonly assets: ReadonlyArray<string> }
+  readonly __PWA__?: {
+    readonly version: string
+    readonly assets: ReadonlyArray<string>
+    readonly pages: ReadonlyArray<string>
+  }
   skipWaiting(): Promise<void>
   addEventListener(type: "install" | "activate", listener: (event: ExtendableEvent) => void): void
   addEventListener(type: "fetch", listener: (event: FetchEvent) => void): void
 }
 
 const sw = globalThis as unknown as ServiceWorkerScope
-const config = sw.__PWA__ ?? { version: "dev", assets: [] }
+const config = sw.__PWA__ ?? { version: "dev", assets: [], pages: [] }
 const CACHE_PREFIX = "little-world-"
 const CACHE_NAME = `${CACHE_PREFIX}${config.version}`
 
-const HTML_ROUTES = ["/", "/kanban", "/journal", "/about"]
+// Injected by the server from the `offline` sections in components/sections.ts.
+const HTML_ROUTES = config.pages
 const OFFLINE_WARM_ROUTES = [...HTML_ROUTES, "/api/garden", "/api/kanban", "/api/hello"]
 const NETWORK_FIRST_PATHS = new Set(OFFLINE_WARM_ROUTES)
 

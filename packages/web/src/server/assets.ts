@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto"
-import { readFileSync, statSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { Effect, Layer, Schedule, Stream } from "effect"
+import { Effect, Layer } from "effect"
 import { HttpRouter, HttpServerResponse, HttpStaticServer } from "effect/http"
-import type { Assets, ClientEntryName, RouteEntryAssets } from "./pages.tsx"
+import { type IslandName, islandRegistry } from "../client/islandRegistry.ts"
+import { offlinePaths } from "../components/sections.ts"
+import type { Assets } from "./Page.ts"
 import { type PwaOptions, pwaRoutes } from "./Pwa.ts"
 
 interface ManifestEntry {
@@ -14,27 +16,19 @@ interface ManifestEntry {
 
 type Manifest = Record<string, ManifestEntry>
 
-const clientEntryNames: ReadonlyArray<ClientEntryName> = [
-  "garden",
-  "kanban",
-  "about",
-  "login",
-  "admin",
-]
-
-const offlineRouteEntries: ReadonlyArray<ClientEntryName> = ["garden", "kanban", "about"]
+const islandNames = Object.keys(islandRegistry) as ReadonlyArray<IslandName>
 
 interface AssetSnapshot {
-  readonly mtimeMs: number
   readonly css: string
   readonly cssPath: string
   readonly fonts: ReadonlyArray<string>
   readonly performance: string
-  readonly entries: ReadonlyMap<ClientEntryName, RouteEntryAssets>
+  readonly performancePreloads: ReadonlyArray<string>
+  readonly islands: ReadonlyMap<IslandName, ReadonlyArray<string>>
   readonly pwa: PwaOptions
 }
 
-const buildSnapshot = (clientDir: string, mtimeMs: number): AssetSnapshot => {
+const buildSnapshot = (clientDir: string): AssetSnapshot => {
   const manifest: Manifest = JSON.parse(readFileSync(`${clientDir}.vite/manifest.json`, "utf8"))
 
   const resolveSource = (name: string) => {
@@ -74,13 +68,15 @@ const buildSnapshot = (clientDir: string, mtimeMs: number): AssetSnapshot => {
     return [...seen].map(asset)
   }
 
-  const entries = new Map<ClientEntryName, RouteEntryAssets>()
-  for (const name of clientEntryNames) {
-    const source = resolveSource(name)
-    entries.set(name, {
-      script: asset(source),
-      preloads: preloads(source),
-    })
+  const islands = new Map<IslandName, ReadonlyArray<string>>()
+  for (const name of islandNames) {
+    const { source } = islandRegistry[name]
+    if (!manifest[source]) {
+      throw new Error(
+        `Island "${name}": source "${source}" is not in the client build manifest; it must be the module its load() imports`,
+      )
+    }
+    islands.set(name, [asset(source), ...preloads(source)])
   }
 
   const performanceSource = resolveSource("performance")
@@ -90,7 +86,7 @@ const buildSnapshot = (clientDir: string, mtimeMs: number): AssetSnapshot => {
   const swFile = asset(resolveSource("sw")).slice(1)
   const swScript = readFileSync(`${clientDir}${swFile}`, "utf8")
 
-  // Precache only the core shell and offline-warmed route chunks on install;
+  // Precache only the core shell and offline-warmed island chunks on install;
   // heavy or auth-only chunks (Three.js, admin, login) cache on demand via fetch.
   const pwaAssets = [
     ...new Set([
@@ -101,10 +97,9 @@ const buildSnapshot = (clientDir: string, mtimeMs: number): AssetSnapshot => {
       ...fonts,
       performance,
       ...performancePreloads,
-      ...offlineRouteEntries.flatMap((name) => {
-        const route = entries.get(name)
-        return route ? [route.script, ...route.preloads] : []
-      }),
+      ...islandNames
+        .filter((name) => islandRegistry[name].offline)
+        .flatMap((name) => islands.get(name) ?? []),
     ]),
   ]
 
@@ -115,98 +110,56 @@ const buildSnapshot = (clientDir: string, mtimeMs: number): AssetSnapshot => {
 
   const pwaVersion = createHash("sha256")
     .update(swScript)
+    .update(offlinePaths.join("\n"))
     .update(cssHash)
     .update(allManifestFiles)
     .digest("hex")
     .slice(0, 12)
 
   return {
-    mtimeMs,
     css,
     cssPath,
     fonts,
     performance,
-    entries,
-    pwa: { version: pwaVersion, script: swScript, assets: pwaAssets },
+    performancePreloads,
+    islands,
+    pwa: { version: pwaVersion, script: swScript, assets: pwaAssets, pages: offlinePaths },
   }
 }
 
 /** Reads the client build and keeps its URLs and serving policy together. */
-export function loadAssets(options?: { readonly devReload?: boolean }) {
-  const devReload = options?.devReload ?? false
+export function loadAssets() {
   const immutable = "public, max-age=31536000, immutable"
   const clientDir = fileURLToPath(new URL("../client/", import.meta.url))
-  const manifestPath = `${clientDir}.vite/manifest.json`
-
-  let current = buildSnapshot(clientDir, statSync(manifestPath).mtimeMs)
-
-  const getSnapshot = (): AssetSnapshot => {
-    if (!devReload) return current
-    try {
-      const mtimeMs = statSync(manifestPath).mtimeMs
-      if (mtimeMs !== current.mtimeMs) {
-        current = buildSnapshot(clientDir, mtimeMs)
-      }
-    } catch {
-      // Keep serving the previous snapshot if Vite is mid-write.
-    }
-    return current
-  }
+  const snapshot = buildSnapshot(clientDir)
 
   const pages: Assets = {
-    get css() {
-      return getSnapshot().cssPath
-    },
-    get fonts() {
-      return getSnapshot().fonts
-    },
-    get performance() {
-      return getSnapshot().performance
-    },
-    devReload,
-    entry(name) {
-      const found = getSnapshot().entries.get(name)
-      if (!found) throw new Error(`Unknown client entry "${name}"`)
-      return found
+    css: snapshot.cssPath,
+    fonts: snapshot.fonts,
+    performance: snapshot.performance,
+    preloadsFor(names) {
+      const result = new Set<string>(snapshot.performancePreloads)
+      for (const name of names) {
+        const found = snapshot.islands.get(name)
+        if (!found) throw new Error(`Unknown island "${name}"`)
+        for (const href of found) result.add(href)
+      }
+      return [...result]
     },
   }
-
-  const encoder = new TextEncoder()
-  const devReloadRoute = devReload
-    ? HttpRouter.add(
-        "GET",
-        "/__dev/reload",
-        Effect.sync(() => {
-          const stream = Stream.fromSchedule(Schedule.spaced("400 millis")).pipe(
-            Stream.prepend([0]),
-            Stream.map(() => getSnapshot().pwa.version),
-            Stream.changes,
-            Stream.map((version) => encoder.encode(`event: build\ndata: ${version}\n\n`)),
-          )
-          return HttpServerResponse.stream(stream, {
-            contentType: "text/event-stream; charset=utf-8",
-            headers: {
-              "cache-control": "no-cache",
-              connection: "keep-alive",
-            },
-          })
-        }),
-      )
-    : Layer.empty
 
   const routes = Layer.mergeAll(
     HttpRouter.add(
       "GET",
       "/assets/style-:hash.css",
       Effect.sync(() =>
-        HttpServerResponse.text(getSnapshot().css, {
+        HttpServerResponse.text(snapshot.css, {
           contentType: "text/css; charset=utf-8",
           headers: { "cache-control": immutable },
         }),
       ),
     ),
-    devReloadRoute,
-    pwaRoutes(() => getSnapshot().pwa),
+    pwaRoutes(snapshot.pwa),
     HttpStaticServer.layer({
       root: `${clientDir}assets`,
       prefix: "/assets",

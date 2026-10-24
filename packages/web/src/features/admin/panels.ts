@@ -1,5 +1,5 @@
 import { can, type Permissions, type SessionUser } from "@playground/contract"
-import type { ComponentType } from "react"
+import { type ComponentType, createElement } from "react"
 import { defineIsland } from "../../client/hydrateIsland.ts"
 import type { AdminPanelProps } from "./AdminPanelProps.ts"
 import GardenPanel from "./GardenPanel.tsx"
@@ -9,8 +9,6 @@ export interface AdminIslandProps {
   readonly panel: string
   readonly user: SessionUser
 }
-
-export const adminPanelIsland = defineIsland<AdminIslandProps>("admin-panel")
 
 /**
  * One entry per admin page at `/admin/<id>`. A panel is listed and served only
@@ -43,3 +41,10 @@ export const adminPanels: ReadonlyArray<AdminPanel> = [
 
 export const panelsFor = (role: string) =>
   adminPanels.filter((panel) => can(role, panel.permissions))
+
+function AdminPanelContainer({ panel, user }: AdminIslandProps) {
+  const current = adminPanels.find((candidate) => candidate.id === panel)
+  return current ? createElement(current.Island, { user }) : null
+}
+
+export const adminPanelIsland = defineIsland("admin-panel", AdminPanelContainer)

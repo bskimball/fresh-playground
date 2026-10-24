@@ -17,7 +17,6 @@ import * as stylex from "@stylexjs/stylex"
 import { useActorRef, useSelector } from "@xstate/react"
 import { type DragEvent, type FormEvent, useEffect, useState } from "react"
 import { defineIsland } from "../../client/hydrateIsland.ts"
-import { AppTheme } from "../../components/AppTheme.tsx"
 import { Icon } from "../../components/Icon.tsx"
 import { schemaJsonCodec } from "../../machines/offlineSync.ts"
 import { text } from "../../styles/text.ts"
@@ -78,10 +77,12 @@ interface DropTarget {
   readonly beforeCardId: string | null
 }
 
-export const kanbanIsland = defineIsland("kanban", schemaJsonCodec(KanbanBoard))
+export const kanbanIsland = defineIsland("kanban", KanbanIsland, {
+  codec: schemaJsonCodec(KanbanBoard),
+})
 
 /** Hydrated Kanban productivity island with drag-and-drop and offline sync. */
-export default function KanbanIsland({ board: initial }: { board: KanbanBoard }) {
+export default function KanbanIsland(initial: KanbanBoard) {
   const actor = useActorRef(kanbanMachine, { input: { board: initial } })
 
   useEffect(() => {
@@ -199,365 +200,357 @@ export default function KanbanIsland({ board: initial }: { board: KanbanBoard })
   }
 
   return (
-    <AppTheme>
-      <div {...stylex.props(styles.page)}>
-        <div {...stylex.props(styles.header)}>
-          <div {...stylex.props(styles.headerCopy)}>
-            <span {...stylex.props(styles.eyebrowPill)}>
-              <Icon name="board" size={12} />
-              <span>CULTIVATING MOMENTUM</span>
+    <div {...stylex.props(styles.page)}>
+      <div {...stylex.props(styles.header)}>
+        <div {...stylex.props(styles.headerCopy)}>
+          <span {...stylex.props(styles.eyebrowPill)}>
+            <Icon name="board" size={12} />
+            <span>CULTIVATING MOMENTUM</span>
+          </span>
+          <h1 {...stylex.props(text.serif, styles.title)}>
+            Field notes &amp; <em {...stylex.props(styles.emphasis)}>tasks.</em>
+          </h1>
+          <p {...stylex.props(styles.intro, text.pretty)}>
+            Tend your work at an unhurried pace. Drag cards between stages, reorder priorities, or
+            plant a new task below.
+          </p>
+        </div>
+        <div {...stylex.props(styles.telemetryCard)}>
+          <div {...stylex.props(styles.metricRow)}>
+            <span {...stylex.props(styles.metricPill)}>
+              <Icon name="spark" size={15} />
+              <strong {...stylex.props(text.tabular)}>
+                {doneCount}/{totalCount}
+              </strong>{" "}
+              bloomed
             </span>
-            <h1 {...stylex.props(text.serif, styles.title)}>
-              Field notes &amp; <em {...stylex.props(styles.emphasis)}>tasks.</em>
-            </h1>
-            <p {...stylex.props(styles.intro, text.pretty)}>
-              Tend your work at an unhurried pace. Drag cards between stages, reorder priorities, or
-              plant a new task below.
-            </p>
-          </div>
-          <div {...stylex.props(styles.telemetryCard)}>
-            <div {...stylex.props(styles.metricRow)}>
-              <span {...stylex.props(styles.metricPill)}>
-                <Icon name="spark" size={15} />
-                <strong {...stylex.props(text.tabular)}>
-                  {doneCount}/{totalCount}
-                </strong>{" "}
-                bloomed
-              </span>
+            <span
+              role="status"
+              aria-live="polite"
+              {...stylex.props(styles.syncPill, boardState === "unsaved" && styles.syncPillOffline)}
+            >
               <span
-                role="status"
-                aria-live="polite"
-                {...stylex.props(
-                  styles.syncPill,
-                  boardState === "unsaved" && styles.syncPillOffline,
-                )}
-              >
-                <span
-                  {...stylex.props(
-                    styles.syncDot,
-                    boardState === "unsaved" && styles.syncDotOffline,
-                  )}
-                />
-                {formatBoardStatus(boardState)}
-              </span>
-            </div>
-            <div {...stylex.props(styles.progressMeta)}>
-              <span {...stylex.props(styles.progressLabel)}>Season progress</span>
-              <span {...stylex.props(styles.progressValue, text.tabular)}>{bloomPercent}%</span>
-            </div>
-            <div {...stylex.props(styles.progressTrack)} aria-hidden="true">
-              <div {...stylex.props(styles.progressFill)} style={{ width: `${bloomPercent}%` }} />
-            </div>
+                {...stylex.props(styles.syncDot, boardState === "unsaved" && styles.syncDotOffline)}
+              />
+              {formatBoardStatus(boardState)}
+            </span>
+          </div>
+          <div {...stylex.props(styles.progressMeta)}>
+            <span {...stylex.props(styles.progressLabel)}>Season progress</span>
+            <span {...stylex.props(styles.progressValue, text.tabular)}>{bloomPercent}%</span>
+          </div>
+          <div {...stylex.props(styles.progressTrack)} aria-hidden="true">
+            <div {...stylex.props(styles.progressFill)} style={{ width: `${bloomPercent}%` }} />
           </div>
         </div>
+      </div>
 
-        <Card xstyle={styles.composerCard}>
-          <form {...stylex.props(styles.composerForm)} onSubmit={handleCreate}>
-            <div {...stylex.props(styles.composerHeader)}>
-              <span {...stylex.props(styles.composerHeading)}>
-                <Icon name="plus" size={14} />
-                <span>PLANT A NEW TASK</span>
-              </span>
-              <span {...stylex.props(styles.capacityBadge, text.tabular)}>
-                {cards.length}/{KANBAN_BOARD_MAX}
-              </span>
-            </div>
-            <div {...stylex.props(styles.composerInputs)}>
-              <TextInput
-                label="New task"
-                placeholder="What needs tending?"
-                value={title}
-                onChange={setTitle}
-                {...(titleTooLong
-                  ? { errorMessage: `Keep titles within ${KANBAN_TITLE_MAX} characters.` }
-                  : boardFull
-                    ? { errorMessage: `Board limit of ${KANBAN_BOARD_MAX} tasks reached.` }
-                    : {})}
-                isRequired
-              />
-              <TextInput
-                label="Notes"
-                placeholder="Optional context or next step…"
-                value={note}
-                onChange={setNote}
-                {...(noteTooLong
-                  ? { errorMessage: `Keep notes within ${KANBAN_NOTE_MAX} characters.` }
-                  : {})}
-              />
-            </div>
-            <div {...stylex.props(styles.composerControls)}>
-              <div {...stylex.props(styles.optionGroup)} role="group" aria-label="Task category">
-                <span {...stylex.props(styles.groupLabel)}>TAG</span>
-                <div {...stylex.props(styles.segmentTrack)}>
-                  {kanbanTags.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      aria-pressed={newTag === tag}
-                      onClick={() => setNewTag(tag)}
-                      {...stylex.props(styles.chip, newTag === tag && styles.chipActive)}
-                    >
-                      {tagMeta[tag].label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div {...stylex.props(styles.optionGroup)} role="group" aria-label="Initial stage">
-                <span {...stylex.props(styles.groupLabel)}>STAGE</span>
-                <div {...stylex.props(styles.segmentTrack)}>
-                  {kanbanStatuses.map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      aria-pressed={newStatus === status}
-                      onClick={() => setNewStatus(status)}
-                      {...stylex.props(styles.chip, newStatus === status && styles.chipActive)}
-                    >
-                      {columnMeta[status].title}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div {...stylex.props(styles.submitWrap)}>
-                <Button type="submit" variant="primary" label="Add task" isDisabled={!canSubmit} />
-              </div>
-            </div>
-          </form>
-        </Card>
-
-        <div {...stylex.props(styles.toolbar)}>
-          <div {...stylex.props(styles.filterBar)} role="group" aria-label="Filter by tag">
-            <button
-              type="button"
-              aria-pressed={filterTag === "all"}
-              onClick={() => actor.send({ type: "SET_FILTER", tag: "all" })}
-              {...stylex.props(styles.filterChip, filterTag === "all" && styles.filterChipActive)}
-            >
-              <span>All</span>
-              <span
-                {...stylex.props(
-                  styles.filterCount,
-                  filterTag === "all" && styles.filterCountActive,
-                  text.tabular,
-                )}
-              >
-                {cards.length}
-              </span>
-            </button>
-            {kanbanTags.map((tag) => {
-              const count = cards.filter((card) => card.tag === tag).length
-              const active = filterTag === tag
-              return (
-                <button
-                  key={tag}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => actor.send({ type: "SET_FILTER", tag })}
-                  {...stylex.props(styles.filterChip, active && styles.filterChipActive)}
-                >
-                  <span>{tagMeta[tag].label}</span>
-                  <span
-                    {...stylex.props(
-                      styles.filterCount,
-                      active && styles.filterCountActive,
-                      text.tabular,
-                    )}
-                  >
-                    {count}
-                  </span>
-                </button>
-              )
-            })}
+      <Card xstyle={styles.composerCard}>
+        <form {...stylex.props(styles.composerForm)} onSubmit={handleCreate}>
+          <div {...stylex.props(styles.composerHeader)}>
+            <span {...stylex.props(styles.composerHeading)}>
+              <Icon name="plus" size={14} />
+              <span>PLANT A NEW TASK</span>
+            </span>
+            <span {...stylex.props(styles.capacityBadge, text.tabular)}>
+              {cards.length}/{KANBAN_BOARD_MAX}
+            </span>
           </div>
-          <div {...stylex.props(styles.searchBox)}>
+          <div {...stylex.props(styles.composerInputs)}>
             <TextInput
-              label="Filter tasks"
-              isLabelHidden
-              placeholder="Search tasks…"
-              value={search}
-              onChange={(value) => actor.send({ type: "SET_SEARCH", search: value })}
-              hasClear
+              label="New task"
+              placeholder="What needs tending?"
+              value={title}
+              onChange={setTitle}
+              {...(titleTooLong
+                ? { errorMessage: `Keep titles within ${KANBAN_TITLE_MAX} characters.` }
+                : boardFull
+                  ? { errorMessage: `Board limit of ${KANBAN_BOARD_MAX} tasks reached.` }
+                  : {})}
+              isRequired
+            />
+            <TextInput
+              label="Notes"
+              placeholder="Optional context or next step…"
+              value={note}
+              onChange={setNote}
+              {...(noteTooLong
+                ? { errorMessage: `Keep notes within ${KANBAN_NOTE_MAX} characters.` }
+                : {})}
             />
           </div>
-        </div>
+          <div {...stylex.props(styles.composerControls)}>
+            <div {...stylex.props(styles.optionGroup)} role="group" aria-label="Task category">
+              <span {...stylex.props(styles.groupLabel)}>TAG</span>
+              <div {...stylex.props(styles.segmentTrack)}>
+                {kanbanTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    aria-pressed={newTag === tag}
+                    onClick={() => setNewTag(tag)}
+                    {...stylex.props(styles.chip, newTag === tag && styles.chipActive)}
+                  >
+                    {tagMeta[tag].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div {...stylex.props(styles.optionGroup)} role="group" aria-label="Initial stage">
+              <span {...stylex.props(styles.groupLabel)}>STAGE</span>
+              <div {...stylex.props(styles.segmentTrack)}>
+                {kanbanStatuses.map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    aria-pressed={newStatus === status}
+                    onClick={() => setNewStatus(status)}
+                    {...stylex.props(styles.chip, newStatus === status && styles.chipActive)}
+                  >
+                    {columnMeta[status].title}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div {...stylex.props(styles.submitWrap)}>
+              <Button type="submit" variant="primary" label="Add task" isDisabled={!canSubmit} />
+            </div>
+          </div>
+        </form>
+      </Card>
 
-        <div {...stylex.props(styles.board)}>
-          {kanbanStatuses.map((status, statusIndex) => {
-            const columnCards = visibleCards.filter((card) => card.status === status)
-            const prevStatus = kanbanStatuses[statusIndex - 1]
-            const nextStatus = kanbanStatuses[statusIndex + 1]
-            const isColumnDropActive = dropTarget?.status === status
-
+      <div {...stylex.props(styles.toolbar)}>
+        <div {...stylex.props(styles.filterBar)} role="group" aria-label="Filter by tag">
+          <button
+            type="button"
+            aria-pressed={filterTag === "all"}
+            onClick={() => actor.send({ type: "SET_FILTER", tag: "all" })}
+            {...stylex.props(styles.filterChip, filterTag === "all" && styles.filterChipActive)}
+          >
+            <span>All</span>
+            <span
+              {...stylex.props(
+                styles.filterCount,
+                filterTag === "all" && styles.filterCountActive,
+                text.tabular,
+              )}
+            >
+              {cards.length}
+            </span>
+          </button>
+          {kanbanTags.map((tag) => {
+            const count = cards.filter((card) => card.tag === tag).length
+            const active = filterTag === tag
             return (
-              <section
-                key={status}
-                aria-label={columnMeta[status].title}
-                data-column={status}
-                onDragOver={(event) => handleColumnDragOver(event, status)}
-                onDrop={(event) => handleDrop(event, status)}
-                {...stylex.props(styles.column, isColumnDropActive && styles.columnDropActive)}
+              <button
+                key={tag}
+                type="button"
+                aria-pressed={active}
+                onClick={() => actor.send({ type: "SET_FILTER", tag })}
+                {...stylex.props(styles.filterChip, active && styles.filterChipActive)}
               >
-                <header {...stylex.props(styles.columnHeader)}>
-                  <div>
-                    <div {...stylex.props(styles.columnTitleRow)}>
-                      <span
-                        {...stylex.props(
-                          styles.columnDot,
-                          status === "doing" && styles.columnDotDoing,
-                          status === "done" && styles.columnDotDone,
-                        )}
-                      />
-                      <h2 {...stylex.props(text.serif, styles.columnTitle)}>
-                        {columnMeta[status].title}
-                      </h2>
-                    </div>
-                    <p {...stylex.props(styles.columnSubtitle)}>{columnMeta[status].subtitle}</p>
-                  </div>
-                  <span {...stylex.props(styles.columnCount, text.tabular)}>
-                    {columnCards.length}
-                  </span>
-                </header>
-
-                <div {...stylex.props(styles.cardList)}>
-                  {columnCards.map((card: KanbanCard, index: number) => {
-                    const nextCard = columnCards[index + 1]
-                    const showDropBefore = isColumnDropActive && dropTarget.beforeCardId === card.id
-                    const isDragging = draggingId === card.id
-
-                    return (
-                      <div key={card.id} {...stylex.props(styles.cardSlot)}>
-                        {showDropBefore && <div {...stylex.props(styles.dropIndicator)} />}
-                        <article
-                          draggable
-                          data-card-id={card.id}
-                          onDragStart={(event) => handleDragStart(event, card.id)}
-                          onDragEnd={handleDragEnd}
-                          onDragOver={(event) =>
-                            handleCardDragOver(event, status, card.id, nextCard?.id ?? null)
-                          }
-                          {...stylex.props(styles.taskCard, isDragging && styles.taskCardDragging)}
-                        >
-                          <div {...stylex.props(styles.cardTop)}>
-                            <Badge
-                              variant={tagMeta[card.tag].badgeVariant}
-                              label={tagMeta[card.tag].label}
-                            />
-                            <div {...stylex.props(styles.orderControls)}>
-                              <button
-                                type="button"
-                                aria-label={`Move "${card.title}" up`}
-                                disabled={index === 0}
-                                onClick={() =>
-                                  actor.send({
-                                    type: "SHIFT_CARD",
-                                    cardId: card.id,
-                                    direction: -1,
-                                  })
-                                }
-                                {...stylex.props(styles.iconAction)}
-                              >
-                                <Icon name="arrowUp" size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`Move "${card.title}" down`}
-                                disabled={index === columnCards.length - 1}
-                                onClick={() =>
-                                  actor.send({
-                                    type: "SHIFT_CARD",
-                                    cardId: card.id,
-                                    direction: 1,
-                                  })
-                                }
-                                {...stylex.props(styles.iconAction)}
-                              >
-                                <Icon name="arrowDown" size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`Delete "${card.title}"`}
-                                onClick={() => actor.send({ type: "DELETE_CARD", cardId: card.id })}
-                                {...stylex.props(styles.iconAction, styles.deleteAction)}
-                              >
-                                <Icon name="trash" size={14} />
-                              </button>
-                            </div>
-                          </div>
-
-                          <h3
-                            {...stylex.props(
-                              styles.cardTitle,
-                              status === "done" && styles.cardTitleDone,
-                            )}
-                          >
-                            {card.title}
-                          </h3>
-                          {card.note && (
-                            <p {...stylex.props(styles.cardNote, text.pretty)}>{card.note}</p>
-                          )}
-
-                          <div {...stylex.props(styles.cardFooter)}>
-                            <span {...stylex.props(styles.dragHint)} aria-hidden="true">
-                              <span {...stylex.props(styles.dragGrip)}>⋮⋮</span> Drag
-                            </span>
-                            <div {...stylex.props(styles.moveActions)}>
-                              {prevStatus && (
-                                <button
-                                  type="button"
-                                  aria-label={`Move "${card.title}" to ${columnMeta[prevStatus].title}`}
-                                  onClick={() =>
-                                    actor.send({
-                                      type: "MOVE_CARD",
-                                      cardId: card.id,
-                                      toStatus: prevStatus,
-                                    })
-                                  }
-                                  {...stylex.props(styles.moveButton)}
-                                >
-                                  ← {columnMeta[prevStatus].title}
-                                </button>
-                              )}
-                              {nextStatus && (
-                                <button
-                                  type="button"
-                                  aria-label={`Move "${card.title}" to ${columnMeta[nextStatus].title}`}
-                                  onClick={() =>
-                                    actor.send({
-                                      type: "MOVE_CARD",
-                                      cardId: card.id,
-                                      toStatus: nextStatus,
-                                    })
-                                  }
-                                  {...stylex.props(styles.moveButton, styles.moveButtonForward)}
-                                >
-                                  {columnMeta[nextStatus].title} →
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </article>
-                      </div>
-                    )
-                  })}
-
-                  {isColumnDropActive && dropTarget.beforeCardId === null && (
-                    <div {...stylex.props(styles.dropIndicator)} />
+                <span>{tagMeta[tag].label}</span>
+                <span
+                  {...stylex.props(
+                    styles.filterCount,
+                    active && styles.filterCountActive,
+                    text.tabular,
                   )}
-
-                  {columnCards.length === 0 && (
-                    <div {...stylex.props(styles.emptyColumn)}>
-                      <p {...stylex.props(styles.emptyText, text.pretty)}>
-                        {columnMeta[status].empty}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </section>
+                >
+                  {count}
+                </span>
+              </button>
             )
           })}
         </div>
+        <div {...stylex.props(styles.searchBox)}>
+          <TextInput
+            label="Filter tasks"
+            isLabelHidden
+            placeholder="Search tasks…"
+            value={search}
+            onChange={(value) => actor.send({ type: "SET_SEARCH", search: value })}
+            hasClear
+          />
+        </div>
       </div>
-    </AppTheme>
+
+      <div {...stylex.props(styles.board)}>
+        {kanbanStatuses.map((status, statusIndex) => {
+          const columnCards = visibleCards.filter((card) => card.status === status)
+          const prevStatus = kanbanStatuses[statusIndex - 1]
+          const nextStatus = kanbanStatuses[statusIndex + 1]
+          const isColumnDropActive = dropTarget?.status === status
+
+          return (
+            <section
+              key={status}
+              aria-label={columnMeta[status].title}
+              data-column={status}
+              onDragOver={(event) => handleColumnDragOver(event, status)}
+              onDrop={(event) => handleDrop(event, status)}
+              {...stylex.props(styles.column, isColumnDropActive && styles.columnDropActive)}
+            >
+              <header {...stylex.props(styles.columnHeader)}>
+                <div>
+                  <div {...stylex.props(styles.columnTitleRow)}>
+                    <span
+                      {...stylex.props(
+                        styles.columnDot,
+                        status === "doing" && styles.columnDotDoing,
+                        status === "done" && styles.columnDotDone,
+                      )}
+                    />
+                    <h2 {...stylex.props(text.serif, styles.columnTitle)}>
+                      {columnMeta[status].title}
+                    </h2>
+                  </div>
+                  <p {...stylex.props(styles.columnSubtitle)}>{columnMeta[status].subtitle}</p>
+                </div>
+                <span {...stylex.props(styles.columnCount, text.tabular)}>
+                  {columnCards.length}
+                </span>
+              </header>
+
+              <div {...stylex.props(styles.cardList)}>
+                {columnCards.map((card: KanbanCard, index: number) => {
+                  const nextCard = columnCards[index + 1]
+                  const showDropBefore = isColumnDropActive && dropTarget.beforeCardId === card.id
+                  const isDragging = draggingId === card.id
+
+                  return (
+                    <div key={card.id} {...stylex.props(styles.cardSlot)}>
+                      {showDropBefore && <div {...stylex.props(styles.dropIndicator)} />}
+                      <article
+                        draggable
+                        data-card-id={card.id}
+                        onDragStart={(event) => handleDragStart(event, card.id)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(event) =>
+                          handleCardDragOver(event, status, card.id, nextCard?.id ?? null)
+                        }
+                        {...stylex.props(styles.taskCard, isDragging && styles.taskCardDragging)}
+                      >
+                        <div {...stylex.props(styles.cardTop)}>
+                          <Badge
+                            variant={tagMeta[card.tag].badgeVariant}
+                            label={tagMeta[card.tag].label}
+                          />
+                          <div {...stylex.props(styles.orderControls)}>
+                            <button
+                              type="button"
+                              aria-label={`Move "${card.title}" up`}
+                              disabled={index === 0}
+                              onClick={() =>
+                                actor.send({
+                                  type: "SHIFT_CARD",
+                                  cardId: card.id,
+                                  direction: -1,
+                                })
+                              }
+                              {...stylex.props(styles.iconAction)}
+                            >
+                              <Icon name="arrowUp" size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Move "${card.title}" down`}
+                              disabled={index === columnCards.length - 1}
+                              onClick={() =>
+                                actor.send({
+                                  type: "SHIFT_CARD",
+                                  cardId: card.id,
+                                  direction: 1,
+                                })
+                              }
+                              {...stylex.props(styles.iconAction)}
+                            >
+                              <Icon name="arrowDown" size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Delete "${card.title}"`}
+                              onClick={() => actor.send({ type: "DELETE_CARD", cardId: card.id })}
+                              {...stylex.props(styles.iconAction, styles.deleteAction)}
+                            >
+                              <Icon name="trash" size={14} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <h3
+                          {...stylex.props(
+                            styles.cardTitle,
+                            status === "done" && styles.cardTitleDone,
+                          )}
+                        >
+                          {card.title}
+                        </h3>
+                        {card.note && (
+                          <p {...stylex.props(styles.cardNote, text.pretty)}>{card.note}</p>
+                        )}
+
+                        <div {...stylex.props(styles.cardFooter)}>
+                          <span {...stylex.props(styles.dragHint)} aria-hidden="true">
+                            <span {...stylex.props(styles.dragGrip)}>⋮⋮</span> Drag
+                          </span>
+                          <div {...stylex.props(styles.moveActions)}>
+                            {prevStatus && (
+                              <button
+                                type="button"
+                                aria-label={`Move "${card.title}" to ${columnMeta[prevStatus].title}`}
+                                onClick={() =>
+                                  actor.send({
+                                    type: "MOVE_CARD",
+                                    cardId: card.id,
+                                    toStatus: prevStatus,
+                                  })
+                                }
+                                {...stylex.props(styles.moveButton)}
+                              >
+                                ← {columnMeta[prevStatus].title}
+                              </button>
+                            )}
+                            {nextStatus && (
+                              <button
+                                type="button"
+                                aria-label={`Move "${card.title}" to ${columnMeta[nextStatus].title}`}
+                                onClick={() =>
+                                  actor.send({
+                                    type: "MOVE_CARD",
+                                    cardId: card.id,
+                                    toStatus: nextStatus,
+                                  })
+                                }
+                                {...stylex.props(styles.moveButton, styles.moveButtonForward)}
+                              >
+                                {columnMeta[nextStatus].title} →
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    </div>
+                  )
+                })}
+
+                {isColumnDropActive && dropTarget.beforeCardId === null && (
+                  <div {...stylex.props(styles.dropIndicator)} />
+                )}
+
+                {columnCards.length === 0 && (
+                  <div {...stylex.props(styles.emptyColumn)}>
+                    <p {...stylex.props(styles.emptyText, text.pretty)}>
+                      {columnMeta[status].empty}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

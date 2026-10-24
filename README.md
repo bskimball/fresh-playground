@@ -28,14 +28,14 @@ Run commands from the repository root; Vite+ is a local dependency, not a global
 
 | Command          | Purpose                                              |
 | ---------------- | ---------------------------------------------------- |
-| `npm run dev`    | Build/watch and run the Effect server                |
+| `npm run dev`    | Vite+ dev server with HMR, hosting the Effect app    |
 | `npm run check`  | Oxlint, Oxfmt check, and workspace TypeScript checks |
 | `npm run test`   | Run tests once                                       |
 | `npm run build`  | Build into `packages/web/dist`                       |
 | `npm run start`  | Serve the existing build                             |
 | `npm run format` | Format repository files; modifies files              |
 
-Vite bundles; it is not the app server. The stack uses Effect services and `AtomHttpApi`, XState for coordinated browser state, Astryx components, StyleX, and React Compiler. [AGENTS.md](AGENTS.md) records repository conventions. Portable agent workflows live in [add-feature](.agents/skills/add-feature/SKILL.md) and [verify-change](.agents/skills/verify-change/SKILL.md).
+The Effect server owns routing: `vp dev` hosts it from source with HMR, and the production build serves it from `packages/web/dist`. The stack uses Effect services and `AtomHttpApi`, XState for coordinated browser state, Astryx components, StyleX, and React Compiler. [AGENTS.md](AGENTS.md) records repository conventions. Portable agent workflows live in [add-feature](.agents/skills/add-feature/SKILL.md) and [verify-change](.agents/skills/verify-change/SKILL.md).
 
 ## Scope and licensing
 

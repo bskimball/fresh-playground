@@ -1,5 +1,6 @@
-import { type KanbanBoard, KanbanCard, type KanbanUpdate } from "@playground/contract"
+import { AppApi, type KanbanBoard, KanbanCard, type KanbanUpdate } from "@playground/contract"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema } from "effect"
+import { HttpApiBuilder } from "effect/http-api"
 import { Sqlite } from "./Sqlite.ts"
 
 const cardsCodec = Schema.toCodecJson(Schema.Array(KanbanCard))
@@ -135,3 +136,15 @@ export class Kanban extends Context.Service<
     }),
   )
 }
+
+export const KanbanHandlers = HttpApiBuilder.group(
+  AppApi,
+  "kanban",
+  Effect.fn(function* (handlers) {
+    const kanban = yield* Kanban
+    return handlers.handleAll({
+      get: () => kanban.get,
+      save: ({ payload }) => kanban.save(payload),
+    })
+  }),
+)

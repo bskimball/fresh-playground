@@ -1,10 +1,12 @@
-import { Effect, Layer } from "effect"
+import { Layer } from "effect"
 import { HttpRouter, HttpServerResponse } from "effect/http"
 
 export interface PwaOptions {
   readonly version: string
   readonly script: string
   readonly assets: ReadonlyArray<string>
+  /** Pages served network-first with a cached fallback. */
+  readonly pages: ReadonlyArray<string>
 }
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
@@ -41,8 +43,15 @@ const webManifest = JSON.stringify({
   ],
 })
 
-export function pwaRoutes(options: PwaOptions | (() => PwaOptions)) {
-  const resolve = typeof options === "function" ? options : () => options
+/** The web manifest and icon, plus `/sw.js` when given a built worker; dev serves no worker. */
+export function pwaRoutes(worker?: PwaOptions) {
+  const swSource = worker
+    ? `globalThis.__PWA__=${JSON.stringify({
+        version: worker.version,
+        assets: worker.assets,
+        pages: worker.pages,
+      })};\n${worker.script}`
+    : undefined
   return Layer.mergeAll(
     HttpRouter.add(
       "GET",
@@ -60,17 +69,15 @@ export function pwaRoutes(options: PwaOptions | (() => PwaOptions)) {
         headers: { "cache-control": "public, max-age=86400" },
       }),
     ),
-    HttpRouter.add(
-      "GET",
-      "/sw.js",
-      Effect.sync(() => {
-        const { version, script, assets } = resolve()
-        const swSource = `globalThis.__PWA__=${JSON.stringify({ version, assets })};\n${script}`
-        return HttpServerResponse.text(swSource, {
-          contentType: "text/javascript; charset=utf-8",
-          headers: { "cache-control": "no-cache" },
-        })
-      }),
-    ),
+    swSource === undefined
+      ? Layer.empty
+      : HttpRouter.add(
+          "GET",
+          "/sw.js",
+          HttpServerResponse.text(swSource, {
+            contentType: "text/javascript; charset=utf-8",
+            headers: { "cache-control": "no-cache" },
+          }),
+        ),
   )
 }

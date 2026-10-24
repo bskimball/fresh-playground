@@ -1,33 +1,43 @@
-import type { ReactNode } from "react"
-import type { IslandCodec } from "../client/hydrateIsland.ts"
+import { createContext, type ReactNode, useContext } from "react"
+import { renderToString } from "react-dom/server"
+import type { HydrationTrigger, IslandDefinition } from "../client/hydrateIsland.ts"
+import type { IslandName } from "../client/islandRegistry.ts"
 import { AppTheme } from "../components/AppTheme.tsx"
-import { type Section, Shell, type Viewer } from "../components/Shell.tsx"
+import { publicLinks, type Section } from "../components/sections.ts"
+import { Shell, type Viewer } from "../components/Shell.tsx"
 import { ThemePreferenceContext, type ThemePreference } from "../components/themePreference.ts"
+
+interface IslandSlot {
+  readonly name: IslandName
+  readonly hydrate: HydrationTrigger
+  readonly marker: string
+  readonly render: () => ReactNode
+}
+
+type RegisterIslandSlot = (slot: Omit<IslandSlot, "marker">) => string
+
+const IslandSlotContext = createContext<RegisterIslandSlot | null>(null)
+
+const prefetchSelector = `a:is(${publicLinks
+  .map((link) => `[href='${link.href}']`)
+  .join(", ")}):not([download]):not([target])`
 
 export function Document({
   title,
   theme,
-  current,
   css,
   fonts = [],
-  script,
   performance,
   preloads = [],
-  devReload = false,
-  viewer,
-  children,
+  bodyHtml,
 }: {
   title: string
   theme: ThemePreference
-  current: Section
   css: string
   fonts?: ReadonlyArray<string> | undefined
-  script?: string | undefined
   performance: string
   preloads?: ReadonlyArray<string> | undefined
-  devReload?: boolean | undefined
-  viewer?: Viewer | undefined
-  children?: ReactNode
+  bodyHtml: string
 }) {
   return (
     <html
@@ -35,7 +45,6 @@ export function Document({
       data-theme={theme === "system" ? undefined : theme}
       data-appearance={theme}
       data-astryx-theme="neutral"
-      data-dev-reload={devReload ? "" : undefined}
     >
       <head>
         <meta charSet="utf-8" />
@@ -72,52 +81,125 @@ export function Document({
             prefetch: [
               {
                 source: "document",
-                where: {
-                  selector_matches:
-                    "a:is([href='/'], [href='/kanban'], [href='/journal'], [href='/about']):not([download]):not([target])",
-                },
+                where: { selector_matches: prefetchSelector },
                 eagerness: "moderate",
               },
             ],
           })}
         </script>
-        {script && <script type="module" src={script} />}
       </head>
-      <body>
-        <ThemePreferenceContext value={theme}>
-          <AppTheme>
-            <Shell current={current} viewer={viewer}>
-              {children}
-            </Shell>
-          </AppTheme>
-        </ThemePreferenceContext>
-      </body>
+      <body
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: bodyHtml is our own server-rendered Shell and Island markup
+        dangerouslySetInnerHTML={{ __html: bodyHtml }}
+      />
     </html>
   )
 }
 
+export function renderDocument({
+  title,
+  theme,
+  current,
+  css,
+  fonts = [],
+  performance,
+  preloadsFor,
+  viewer,
+  children,
+}: {
+  title: string
+  theme: ThemePreference
+  current: Section
+  css: string
+  fonts?: ReadonlyArray<string> | undefined
+  performance: string
+  preloadsFor?: ((islands: Iterable<IslandName>) => ReadonlyArray<string>) | undefined
+  viewer?: Viewer | undefined
+  children?: ReactNode
+}): string {
+  const slots: Array<IslandSlot> = []
+  const registerSlot: RegisterIslandSlot = (slot) => {
+    const marker = `<!--__ISLAND_SLOT_${slots.length}__-->`
+    slots.push({ ...slot, marker })
+    return marker
+  }
+
+  let bodyHtml = renderToString(
+    <IslandSlotContext value={registerSlot}>
+      <ThemePreferenceContext value={theme}>
+        <AppTheme>
+          <Shell current={current} viewer={viewer}>
+            {children}
+          </Shell>
+        </AppTheme>
+      </ThemePreferenceContext>
+    </IslandSlotContext>,
+  )
+
+  const eagerIslands = new Set<IslandName>()
+  for (const slot of slots) {
+    if (slot.hydrate === "load") eagerIslands.add(slot.name)
+    const islandHtml = renderToString(
+      <ThemePreferenceContext value={theme}>
+        <AppTheme>{slot.render()}</AppTheme>
+      </ThemePreferenceContext>,
+    )
+    bodyHtml = bodyHtml.replace(slot.marker, () => islandHtml)
+  }
+
+  const preloads = preloadsFor ? preloadsFor(eagerIslands) : []
+
+  return `<!DOCTYPE html>${renderToString(
+    <Document
+      title={title}
+      theme={theme}
+      css={css}
+      fonts={fonts}
+      performance={performance}
+      preloads={preloads}
+      bodyHtml={bodyHtml}
+    />,
+  )}`
+}
+
 /**
- * Hydration root for an island. The island is rendered on its own, so its
- * markup matches what `hydrateRoot` renders in the browser.
+ * Hydration root for an island. The island is rendered in its own isolated
+ * React root so its markup and `useId` sequence match `hydrateRoot`.
  */
-export function Island<P>(
-  options:
-    | { island: IslandCodec<P>; name?: undefined; html: string; props: P }
-    | { island?: undefined; name: string; html: string; props?: unknown },
+export function Island<P, Name extends IslandName = IslandName>(
+  options: [P] extends [void]
+    ? { readonly island: IslandDefinition<P, Name>; readonly props?: undefined }
+    : { readonly island: IslandDefinition<P, Name>; readonly props: P },
 ) {
-  const islandName = options.island ? options.island.name : options.name
-  const encodedProps = options.island ? options.island.encode(options.props) : options.props
+  const { island } = options
+  const props = options.props as P
+  const encodedProps = props === undefined ? undefined : island.encode(props)
+  const registerSlot = useContext(IslandSlotContext)
+  const theme = useContext(ThemePreferenceContext) ?? "system"
+  const innerHtml = registerSlot
+    ? registerSlot({
+        name: island.name,
+        hydrate: island.hydrate,
+        render: () => island.render(props),
+      })
+    : renderToString(
+        <ThemePreferenceContext value={theme}>
+          <AppTheme>{island.render(props)}</AppTheme>
+        </ThemePreferenceContext>,
+      )
+
   return (
     <>
       <div
-        data-island={islandName}
+        data-island={island.name}
+        data-hydrate={island.hydrate === "visible" ? "visible" : undefined}
         inert
         aria-busy="true"
         data-props={encodedProps === undefined ? undefined : JSON.stringify(encodedProps)}
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: html is our own server-rendered island markup, never user input
-        dangerouslySetInnerHTML={{ __html: options.html }}
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: innerHtml is our own server-rendered island markup, never user input
+        dangerouslySetInnerHTML={{ __html: innerHtml }}
       />
-      <p data-island-status={islandName} role="status">
+      <p data-island-status={island.name} role="status">
         Loading interactive controls…
       </p>
       <noscript>

@@ -1,40 +1,19 @@
 import { AppApi } from "@playground/contract"
-import { Clock, Effect, Layer } from "effect"
+import { Clock, Effect, type FileSystem, Layer, type Path } from "effect"
+import type { Etag, HttpPlatform, HttpRouter } from "effect/http"
 import { HttpApiBuilder } from "effect/http-api"
 import { AdminHandlers, AuthenticationLive } from "./Admin.ts"
-import { Garden } from "./Garden.ts"
-import { Kanban } from "./Kanban.ts"
+import { Auth } from "./Auth.ts"
+import { Garden, GardenHandlers } from "./Garden.ts"
+import { Kanban, KanbanHandlers } from "./Kanban.ts"
+import { Mailer } from "./Mailer.ts"
+import { Sqlite } from "./Sqlite.ts"
 
 export { Auth, AuthRoutes, webHeaders } from "./Auth.ts"
 export { Garden, type GardenStore, moistureAt } from "./Garden.ts"
 export { Kanban, seedCards } from "./Kanban.ts"
 export { Mailer } from "./Mailer.ts"
 export { Sqlite } from "./Sqlite.ts"
-
-const GardenHandlers = HttpApiBuilder.group(
-  AppApi,
-  "garden",
-  Effect.fn(function* (handlers) {
-    const garden = yield* Garden
-    return handlers.handleAll({
-      get: () => garden.get,
-      water: () => garden.water,
-      settings: ({ payload }) => garden.updateSettings(payload),
-    })
-  }),
-)
-
-const KanbanHandlers = HttpApiBuilder.group(
-  AppApi,
-  "kanban",
-  Effect.fn(function* (handlers) {
-    const kanban = yield* Kanban
-    return handlers.handleAll({
-      get: () => kanban.get,
-      save: ({ payload }) => kanban.save(payload),
-    })
-  }),
-)
 
 const SystemHandlers = HttpApiBuilder.group(AppApi, "system", (handlers) =>
   Effect.succeed(
@@ -48,10 +27,33 @@ const SystemHandlers = HttpApiBuilder.group(AppApi, "system", (handlers) =>
 )
 
 /**
- * Mounts `AppApi` on the `HttpRouter`. `Garden` and `Auth` are left for the
- * app to provide, so the API and server-rendered pages share one instance.
+ * Every app service over one shared SQLite connection. Provide it once so
+ * pages, API handlers, and health checks share the same instances.
  */
-export const ApiRoutes = HttpApiBuilder.layer(AppApi).pipe(
+export const AppServices = Layer.mergeAll(
+  Garden.layer,
+  Kanban.layer,
+  Auth.layer.pipe(Layer.provide(Mailer.layer)),
+).pipe(Layer.provide(Sqlite.layer))
+
+/**
+ * What a route layer may still need once served: `AppServices`, the router, and the
+ * platform services the HTTP server supplies. Annotating a route list with it reports
+ * a forgotten service layer or handler group at that list, by name.
+ */
+export type AppRoutes = Layer.Layer<
+  never,
+  never,
+  | Layer.Success<typeof AppServices>
+  | HttpRouter.HttpRouter
+  | HttpPlatform.HttpPlatform
+  | Etag.Generator
+  | FileSystem.FileSystem
+  | Path.Path
+>
+
+/** Mounts `AppApi` on the `HttpRouter`. */
+export const ApiRoutes: AppRoutes = HttpApiBuilder.layer(AppApi).pipe(
   Layer.provide([GardenHandlers, KanbanHandlers, AdminHandlers, SystemHandlers]),
   Layer.provide(AuthenticationLive),
 )

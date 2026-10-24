@@ -4,7 +4,7 @@ import * as stylex from "@stylexjs/stylex"
 import { AsyncResult } from "effect/reactivity"
 import { useEffect } from "react"
 import { ApiClient } from "../client/ApiClient.ts"
-import { AppTheme } from "../components/AppTheme.tsx"
+import { defineIsland } from "../client/hydrateIsland.ts"
 import { Icon } from "../components/Icon.tsx"
 import { watchFreshness } from "../features/terrarium/freshness.ts"
 import { text } from "../styles/text.ts"
@@ -33,63 +33,65 @@ export default function LiveStatusIsland() {
   const waiting = isServer || hello.waiting || garden.waiting
 
   return (
-    <AppTheme>
-      <div {...stylex.props(styles.console)}>
-        <div {...stylex.props(styles.consoleHeader)}>
-          <span {...stylex.props(styles.consoleLabel)}>
-            <Icon name="spark" size={14} />
-            <span>LIVE TELEMETRY CONSOLE</span>
-          </span>
-          <Button
-            size="sm"
-            label={waiting ? "Refreshing…" : "Refresh"}
-            isDisabled={waiting}
-            isLoading={waiting}
-            onClick={() => {
-              refreshHello()
-              refreshGarden()
-            }}
-          />
-        </div>
-        <dl {...stylex.props(styles.grid)}>
-          <div {...stylex.props(styles.endpointCard)}>
-            <dt {...stylex.props(styles.term)}>
-              <span {...stylex.props(styles.statusDot)} />
-              <span>GET /api/hello</span>
-            </dt>
-            <dd {...stylex.props(styles.value, text.tabular)} aria-live="polite">
-              {isServer
-                ? "Loading…"
-                : AsyncResult.match(hello, {
-                    onInitial: () => "Loading…",
-                    onFailure: () => "The server didn’t answer.",
-                    onSuccess: ({ value }) => `${value.message} (${timeFormat.format(value.time)})`,
-                  })}
-            </dd>
-          </div>
-          <div {...stylex.props(styles.endpointCard)}>
-            <dt {...stylex.props(styles.term)}>
-              <span {...stylex.props(styles.statusDot)} />
-              <span>GET /api/garden</span>
-            </dt>
-            <dd {...stylex.props(styles.value, text.tabular)} aria-live="polite">
-              {isServer
-                ? "Loading…"
-                : AsyncResult.match(garden, {
-                    onInitial: () => "Loading…",
-                    onFailure: () => "The garden is unreachable.",
-                    onSuccess: ({ value }) =>
-                      `Moisture ${value.moisture}% · sunlight ${value.sunlight}% · ${
-                        value.night ? "night" : "day"
-                      } · watered ${value.waters} times`,
-                  })}
-            </dd>
-          </div>
-        </dl>
+    <div {...stylex.props(styles.console)}>
+      <div {...stylex.props(styles.consoleHeader)}>
+        <span {...stylex.props(styles.consoleLabel)}>
+          <Icon name="spark" size={14} />
+          <span>LIVE TELEMETRY CONSOLE</span>
+        </span>
+        <Button
+          size="sm"
+          label={waiting ? "Refreshing…" : "Refresh"}
+          isDisabled={waiting}
+          isLoading={waiting}
+          onClick={() => {
+            refreshHello()
+            refreshGarden()
+          }}
+        />
       </div>
-    </AppTheme>
+      <dl {...stylex.props(styles.grid)}>
+        <div {...stylex.props(styles.endpointCard)}>
+          <dt {...stylex.props(styles.term)}>
+            <span {...stylex.props(styles.statusDot)} />
+            <span>GET /api/hello</span>
+          </dt>
+          <dd {...stylex.props(styles.value, text.tabular)} aria-live="polite">
+            {isServer
+              ? "Loading…"
+              : AsyncResult.match(hello, {
+                  onInitial: () => "Loading…",
+                  onFailure: () => "The server didn’t answer.",
+                  onSuccess: ({ value }) => `${value.message} (${timeFormat.format(value.time)})`,
+                })}
+          </dd>
+        </div>
+        <div {...stylex.props(styles.endpointCard)}>
+          <dt {...stylex.props(styles.term)}>
+            <span {...stylex.props(styles.statusDot)} />
+            <span>GET /api/garden</span>
+          </dt>
+          <dd {...stylex.props(styles.value, text.tabular)} aria-live="polite">
+            {isServer
+              ? "Loading…"
+              : AsyncResult.match(garden, {
+                  onInitial: () => "Loading…",
+                  onFailure: () => "The garden is unreachable.",
+                  onSuccess: ({ value }) =>
+                    `Moisture ${value.moisture}% · sunlight ${value.sunlight}% · ${
+                      value.night ? "night" : "day"
+                    } · watered ${value.waters} times`,
+                })}
+          </dd>
+        </div>
+      </dl>
+    </div>
   )
 }
+
+export const liveStatusIsland = defineIsland("live-status", LiveStatusIsland, {
+  hydrate: "visible",
+})
 
 const styles = stylex.create({
   console: {

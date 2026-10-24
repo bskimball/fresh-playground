@@ -11,7 +11,6 @@ import { Exit } from "effect"
 import { AsyncResult, Atom } from "effect/reactivity"
 import { useState } from "react"
 import { ApiClient } from "../../client/ApiClient.ts"
-import { AppTheme } from "../../components/AppTheme.tsx"
 import { text } from "../../styles/text.ts"
 import { colors } from "../../styles/tokens.stylex.ts"
 import type { AdminPanelProps } from "./AdminPanelProps.ts"
@@ -61,133 +60,130 @@ export default function UsersPanel({ user: me }: AdminPanelProps) {
   const params = (user: AdminUser) => ({ params: { id: user.id }, reactivityKeys: usersKey })
 
   return (
-    <AppTheme>
-      <Card xstyle={styles.card}>
-        <div {...stylex.props(styles.toolbar)}>
-          <div {...stylex.props(styles.searchWrap)}>
-            <TextInput
-              label="Search by email"
-              placeholder="Filter members by email…"
-              value={search}
-              onChange={setSearch}
-              hasClear
-              width={320}
-            />
-          </div>
-          {AsyncResult.isSuccess(users) && (
-            <span {...stylex.props(styles.countPill, text.tabular)}>
-              {users.value.total} {users.value.total === 1 ? "account" : "accounts"}
-            </span>
-          )}
+    <Card xstyle={styles.card}>
+      <div {...stylex.props(styles.toolbar)}>
+        <div {...stylex.props(styles.searchWrap)}>
+          <TextInput
+            label="Search by email"
+            placeholder="Filter members by email…"
+            value={search}
+            onChange={setSearch}
+            hasClear
+            width={320}
+          />
         </div>
-
-        {message && (
-          <p role="status" {...stylex.props(styles.statusPill)}>
-            {message}
-          </p>
+        {AsyncResult.isSuccess(users) && (
+          <span {...stylex.props(styles.countPill, text.tabular)}>
+            {users.value.total} {users.value.total === 1 ? "account" : "accounts"}
+          </span>
         )}
+      </div>
 
-        {AsyncResult.match(users, {
-          onInitial: () => <p {...stylex.props(styles.message)}>Loading users…</p>,
-          onFailure: () => <Banner status="error" title="Users couldn’t be loaded." />,
-          onSuccess: ({ value }) => (
-            <Table<Row>
-              data={value.users as Row[]}
-              idKey="id"
-              density="balanced"
-              columns={[
-                {
-                  key: "name",
-                  header: "User",
-                  renderCell: (user) => (
-                    <div {...stylex.props(styles.userCell)}>
-                      <strong {...stylex.props(styles.userName)}>{user.name}</strong>
-                      <div {...stylex.props(styles.email)}>{user.email}</div>
-                    </div>
-                  ),
-                },
-                {
-                  key: "role",
-                  header: "Role",
-                  renderCell: (user) => (
-                    <div {...stylex.props(styles.badges)}>
-                      <Badge
-                        variant={user.role === "admin" ? "success" : "neutral"}
-                        label={user.role}
+      {message && (
+        <p role="status" {...stylex.props(styles.statusPill)}>
+          {message}
+        </p>
+      )}
+
+      {AsyncResult.match(users, {
+        onInitial: () => <p {...stylex.props(styles.message)}>Loading users…</p>,
+        onFailure: () => <Banner status="error" title="Users couldn’t be loaded." />,
+        onSuccess: ({ value }) => (
+          <Table<Row>
+            data={value.users as Row[]}
+            idKey="id"
+            density="balanced"
+            columns={[
+              {
+                key: "name",
+                header: "User",
+                renderCell: (user) => (
+                  <div {...stylex.props(styles.userCell)}>
+                    <strong {...stylex.props(styles.userName)}>{user.name}</strong>
+                    <div {...stylex.props(styles.email)}>{user.email}</div>
+                  </div>
+                ),
+              },
+              {
+                key: "role",
+                header: "Role",
+                renderCell: (user) => (
+                  <div {...stylex.props(styles.badges)}>
+                    <Badge
+                      variant={user.role === "admin" ? "success" : "neutral"}
+                      label={user.role}
+                    />
+                    {user.banned && <Badge variant="error" label="banned" />}
+                  </div>
+                ),
+              },
+              {
+                key: "createdAt",
+                header: "Joined",
+                renderCell: (user) => (
+                  <span {...stylex.props(styles.joinedDate, text.tabular)}>
+                    {dateFormat.format(user.createdAt)}
+                  </span>
+                ),
+              },
+              {
+                key: "actions",
+                header: "Actions",
+                renderCell: (user) => {
+                  const self = user.id === me.id
+                  const disabled = busy !== null
+                  const nextRole = roleNames.find((role) => role !== user.role) ?? "user"
+                  return (
+                    <div {...stylex.props(styles.actions)}>
+                      <Button
+                        size="sm"
+                        label={`Make ${nextRole}`}
+                        isDisabled={disabled || self}
+                        onClick={() =>
+                          void act(user.id, `Role set to ${nextRole}`, () =>
+                            setRole({ ...params(user), payload: { role: nextRole } }),
+                          )
+                        }
                       />
-                      {user.banned && <Badge variant="error" label="banned" />}
+                      <Button
+                        size="sm"
+                        label={user.banned ? "Unban" : "Ban"}
+                        isDisabled={disabled || self}
+                        onClick={() =>
+                          void (user.banned
+                            ? act(user.id, "User unbanned", () => unban(params(user)))
+                            : act(user.id, "User banned", () =>
+                                ban({ ...params(user), payload: {} }),
+                              ))
+                        }
+                      />
+                      <Button
+                        size="sm"
+                        label="Sign out everywhere"
+                        isDisabled={disabled}
+                        onClick={() =>
+                          void act(user.id, "Sessions revoked", () => revoke(params(user)))
+                        }
+                      />
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        label="Delete"
+                        isDisabled={disabled || self}
+                        onClick={() => {
+                          if (!window.confirm(`Delete ${user.email}? This can’t be undone.`)) return
+                          void act(user.id, "User deleted", () => remove(params(user)))
+                        }}
+                      />
                     </div>
-                  ),
+                  )
                 },
-                {
-                  key: "createdAt",
-                  header: "Joined",
-                  renderCell: (user) => (
-                    <span {...stylex.props(styles.joinedDate, text.tabular)}>
-                      {dateFormat.format(user.createdAt)}
-                    </span>
-                  ),
-                },
-                {
-                  key: "actions",
-                  header: "Actions",
-                  renderCell: (user) => {
-                    const self = user.id === me.id
-                    const disabled = busy !== null
-                    const nextRole = roleNames.find((role) => role !== user.role) ?? "user"
-                    return (
-                      <div {...stylex.props(styles.actions)}>
-                        <Button
-                          size="sm"
-                          label={`Make ${nextRole}`}
-                          isDisabled={disabled || self}
-                          onClick={() =>
-                            void act(user.id, `Role set to ${nextRole}`, () =>
-                              setRole({ ...params(user), payload: { role: nextRole } }),
-                            )
-                          }
-                        />
-                        <Button
-                          size="sm"
-                          label={user.banned ? "Unban" : "Ban"}
-                          isDisabled={disabled || self}
-                          onClick={() =>
-                            void (user.banned
-                              ? act(user.id, "User unbanned", () => unban(params(user)))
-                              : act(user.id, "User banned", () =>
-                                  ban({ ...params(user), payload: {} }),
-                                ))
-                          }
-                        />
-                        <Button
-                          size="sm"
-                          label="Sign out everywhere"
-                          isDisabled={disabled}
-                          onClick={() =>
-                            void act(user.id, "Sessions revoked", () => revoke(params(user)))
-                          }
-                        />
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          label="Delete"
-                          isDisabled={disabled || self}
-                          onClick={() => {
-                            if (!window.confirm(`Delete ${user.email}? This can’t be undone.`))
-                              return
-                            void act(user.id, "User deleted", () => remove(params(user)))
-                          }}
-                        />
-                      </div>
-                    )
-                  },
-                },
-              ]}
-            />
-          ),
-        })}
-      </Card>
-    </AppTheme>
+              },
+            ]}
+          />
+        ),
+      })}
+    </Card>
   )
 }
 

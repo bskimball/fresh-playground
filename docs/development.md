@@ -8,85 +8,83 @@ Code blocks below are excerpts labeled with their source paths, not standalone m
 
 ## Add a server-rendered route
 
-1. Add a `router.add` inside `PageRoutes` in `packages/web/src/server/pages.tsx`. Read Effect services directly, as `/journal` does; do not make an HTTP call back into the same process.
-2. Render through the existing `page` helper and `Document`, preserving theme, viewer, asset links, and private page caching. For shared presentation, add a component under `packages/web/src/components/`; feature-specific components belong under `src/features/<feature>/`.
-3. If it belongs in navigation, extend `Section` and `links` in `packages/web/src/components/Shell.tsx`. A static page needs no page-specific browser entry; the common `performance.ts` entry still loads.
-4. Decide explicitly whether the route belongs in the PWA network-first/warm lists in `packages/web/src/client/sw.ts`. Do not add private pages to the demo offline cache by default.
+1. Add the page's section to `sections` in `packages/web/src/components/sections.ts`: its `href`, `label`, and `icon`; `nav: "everyone"` or `nav: "admins"` to list it in navigation (public links are also prefetched); and `offline: true` only for public pages the service worker may serve from cache. Private pages never set `offline`.
+2. Add the route to the feature's `packages/web/src/features/<feature>/routes.tsx`, creating it if needed as an `HttpRouter.use` layer like `KanbanPages`. Read Effect services directly, as `/journal` does; do not make an HTTP call back into the same process.
+3. Return `yield* page.render(request, { title, current, children })`, where `page` is the `Page` service from `packages/web/src/server/Page.ts`. It looks up the signed-in viewer, renders `Document` with theme and asset links, and sets private caching. Pass `viewer` only when the route already resolved it with `page.viewer` to make a decision, as `/login` and `/admin` do. Shared presentation belongs in `packages/web/src/components/`.
+4. For a new `routes.tsx`, add its layer to `PageRoutes` in `packages/web/src/server/pages.ts`.
 
-The `/journal` route in `packages/web/src/server/pages.tsx` connects steps 1–2: acquire the shared service inside `PageRoutes`, read it per request, then pass content to `page`.
+A static page needs no page-specific browser entry; the common `performance.ts` entry still loads. `GardenPages` in `packages/web/src/features/terrarium/routes.tsx` connects steps 2–3: acquire the services once, read them per request, then render.
 
 ```tsx
-// Inside PageRoutes; other setup and routes omitted.
+// Inside GardenPages; the "/" route is omitted.
+const page = yield * Page
 const garden = yield * Garden
-// ... viewerFor and page helpers remain in source ...
 yield *
   router.add("GET", "/journal", (request) =>
     Effect.gen(function* () {
       const state = yield* garden.get
-      return page(request, {
+      return yield* page.render(request, {
         title: "Journal",
         current: "journal",
-        viewer: yield* viewerFor(request),
         children: <JournalTimeline entries={state.journal} />,
       })
     }),
   )
 ```
 
-No `entry` is selected because this page needs no island. The existing `page` helper supplies `Document`, shared assets, theme, viewer, and private caching headers.
+No `<Island>` is rendered because this page needs no interactive hydration. `Page` supplies `renderDocument`, shared assets, theme, the viewer, and private caching headers. The section entry supplies its navigation link, prefetching, and offline caching.
+
+`PageRoutes` and `ApiRoutes` are typed `AppRoutes`, so a route that needs a service missing from `AppServices` fails typechecking at that list and names the service.
 
 Done when the route renders directly from its URL and navigation works, including without JavaScript if it has no interactive requirement.
 
 ## Add an island
 
-Use `packages/web/src/features/kanban/KanbanIsland.tsx` and `packages/web/src/client/kanban.tsx` as the end-to-end reference.
+Use `packages/web/src/features/kanban/KanbanIsland.tsx` and `packages/web/src/client/islandRegistry.ts` as the end-to-end reference.
 
-1. Define the component and a `defineIsland` descriptor in the feature. For schema-backed props, use `schemaJsonCodec` from `packages/web/src/machines/offlineSync.ts`; this preserves `Date` values across JSON. Plain JSON-safe props can use the default codec.
-2. In `pages.tsx`, render the island independently with `renderIsland` and put its HTML and props into `Island` from `Document.tsx`. Match the server and browser theme context; island components use `AppTheme` because each has its own React root.
-3. Add a thin lowercase single-word entry under `packages/web/src/client/`, import `vite/modulepreload-polyfill`, and call `bootIsland` with the same descriptor/component. Feature logic stays in the feature directory.
-4. Add its name to `ClientEntryName` in `pages.tsx` and `clientEntryNames` in `assets.ts`; select it as the page's `entry`. `packages/web/vite.config.ts` discovers lowercase `.ts`/`.tsx` entry files, but does not update these server registries for you.
-5. Use XState for coordinated state, with a `.machine.ts` file. Use existing `fromEffect` and `clientRuntime` for Effect actors, or `ApiClient.query`/`ApiClient.mutation` atoms with `@effect/atom-react` for reactive data. Reuse Astryx and StyleX patterns.
+1. Define the component and bind it with `defineIsland` in the feature. Pass `{ codec: schemaJsonCodec(Schema) }` from `packages/web/src/machines/offlineSync.ts` for schema-backed props (preserving `Date` values across JSON, while keeping `hydrateIsland.ts` free of Effect runtime imports on non-Effect islands), `{ hydrate: "visible" }` for viewport-triggered hydration, or omit options for plain JSON-safe or `void` props. Both server rendering and browser hydration wrap the island in `AppTheme` automatically.
+2. Register the island once in `packages/web/src/client/islandRegistry.ts`: its source path, `offline` precache flag, and `load` import. The key must match the name passed to `defineIsland`; the registry type rejects a mismatch, and `<Island>` only accepts registered islands. `performance.ts` boots registered islands present on the page, and `assets.ts` resolves each island's built chunk and modulepreloads from the same entry.
+3. In the feature's `routes.tsx`, render `<Island island={...} props={...} />` (or `<Island island={...} />` when `props` is `void`). `renderDocument` renders each island in its own isolated React root and emits `<link rel="modulepreload">` tags for eager islands rendered on that page.
+4. Use XState for coordinated state, with a `.machine.ts` file. Use existing `fromEffect` and `clientRuntime` for Effect actors, or `ApiClient.query`/`ApiClient.mutation` atoms with `@effect/atom-react` for reactive data. Reuse Astryx and StyleX patterns.
 
-The same descriptor connects these three pieces; the codec serializes the board on the server and restores it in the browser.
+The same definition connects the feature, registry, and server route; the codec serializes the board on the server and restores it in the browser.
 
-**Descriptor — `packages/web/src/features/kanban/KanbanIsland.tsx`:**
+**Definition — `packages/web/src/features/kanban/KanbanIsland.tsx`:**
 
 ```ts
-export const kanbanIsland = defineIsland("kanban", schemaJsonCodec(KanbanBoard))
+export const kanbanIsland = defineIsland("kanban", KanbanIsland, {
+  codec: schemaJsonCodec(KanbanBoard),
+})
 ```
 
-**Thin browser entry — `packages/web/src/client/kanban.tsx` (complete file):**
+**Registry — `packages/web/src/client/islandRegistry.ts`:**
+
+```ts
+kanban: {
+  source: "src/features/kanban/KanbanIsland.tsx",
+  offline: true,
+  load: () => import("../features/kanban/KanbanIsland.tsx").then((m) => m.kanbanIsland),
+},
+```
+
+**Server markup — `packages/web/src/features/kanban/routes.tsx`, inside `/kanban`:**
 
 ```tsx
-import "vite/modulepreload-polyfill"
-import { createElement } from "react"
-import KanbanIsland, { kanbanIsland } from "../features/kanban/KanbanIsland.tsx"
-import { bootIsland } from "./hydrateIsland.ts"
-
-bootIsland(kanbanIsland, (board) => createElement(KanbanIsland, { board }))
+<Island island={kanbanIsland} props={board} />
 ```
 
-**Server markup — `packages/web/src/server/pages.tsx`, inside `/kanban`:**
-
-```tsx
-<Island
-  island={kanbanIsland}
-  html={renderIsland(request, <KanbanIsland board={board} />)}
-  props={board}
-/>
-```
-
-The route obtains `board` with `yield* kanban.get` and selects `entry: "kanban"` in `page`. `renderIsland` supplies the request's theme context; `Island` embeds both HTML and encoded props for the matching browser root.
+The route obtains `board` with `yield* kanban.get` and renders `<Island island={kanbanIsland} props={board} />` through `page.render`. `renderDocument` supplies the request's theme context, wraps the island in `AppTheme`, embeds both HTML and encoded props, and preloads the `kanban` island chunk.
 
 Done when the initial HTML matches hydration, controls remain inert until ready, a failed bootstrap leaves a useful status, and keyboard interaction works. Do not serialize secrets into island props.
 
 ## Add a shared schema and API
 
 1. Define schemas, typed errors/statuses, and an `HttpApiGroup` in a named module under `packages/contract/src/`. See `Garden.ts` and `Kanban.ts`. Export it from `index.ts` and add the group to `AppApi` in `Api.ts`.
-2. Implement `HttpApiBuilder.group(AppApi, ...)` handlers in `packages/server/src/index.ts`, or a focused module like `Admin.ts`; provide them to `ApiRoutes`. Validate at the shared contract boundary, not only in UI controls.
-3. Keep business rules in an Effect service under `packages/server/src/`. Follow `Garden.layer`/`Kanban.layer` for a SQLite-backed service, export it from server `index.ts`, and wire the layer once in `packages/web/src/server/main.ts`. Pages, API handlers, and health checks should share that instance.
-4. Browser code imports the contract and `ApiClient`, never server implementation modules. Expected failures should remain typed. The shared client retries transient `GET`/`HEAD` failures, not mutations.
-5. For persistent schema changes, implement and document an explicit migration strategy and recovery plan. Current demo services create missing tables; they are not a general schema migration framework.
+2. Keep business rules in an Effect service in a named module under `packages/server/src/`. Follow `Garden.layer`/`Kanban.layer` for a SQLite-backed service.
+3. In the same module, export the group's `HttpApiBuilder.group(AppApi, ...)` handlers, mapping each endpoint to the service, as `GardenHandlers` does. Validate at the shared contract boundary, not only in UI controls.
+4. In `packages/server/src/index.ts`, export the service, add its layer to `AppServices`, and add its handlers to `ApiRoutes`. The web server provides `AppServices` once, so pages, API handlers, and health checks share the instance; `packages/web/src/server/main.ts` does not change. A forgotten layer or handler group fails typechecking at `ApiRoutes` and names it, such as `Kanban` or `Service<"app", "kanban">`.
+5. Browser code imports the contract and `ApiClient`, never server implementation modules. Expected failures should remain typed. The shared client retries transient `GET`/`HEAD` failures, not mutations.
+6. For persistent schema changes, implement and document an explicit migration strategy and recovery plan. Current demo services create missing tables; they are not a general schema migration framework.
 
 ### Follow a contract through to the browser
 
@@ -106,7 +104,7 @@ HttpApiEndpoint.put("settings", "/settings", {
 // The group ends with .prefix("/api/garden").
 ```
 
-**Handler/service boundary — `packages/server/src/index.ts`:**
+**Handler/service boundary — `packages/server/src/Garden.ts`:**
 
 ```ts
 const GardenHandlers = HttpApiBuilder.group(
@@ -123,7 +121,7 @@ const GardenHandlers = HttpApiBuilder.group(
 )
 ```
 
-`Garden` in the contract is the response schema; `Garden` in the handler is the server service. `ApiRoutes` provides these handlers, while the web server provides the shared service layer.
+`Garden` in the contract is the response schema; `Garden` in the handler is the server service. `ApiRoutes` in `packages/server/src/index.ts` provides these handlers, and `AppServices` there provides the shared service layer.
 
 **Typed browser read — `packages/web/src/islands/LiveStatusIsland.tsx`:**
 
@@ -180,7 +178,7 @@ Done when invalid inputs are rejected by the contract, declared errors reach cal
 1. Add resource statements and role grants in `packages/contract/src/Access.ts`.
 2. Add endpoints to `AdminApi` in `packages/contract/src/Admin.ts`, retaining `Authentication` middleware. In `packages/server/src/Admin.ts`, use `CurrentUser` and `requirePermission` before executing the operation. Cookie-authenticated writes also retain the middleware's same-origin check.
 3. Add the panel component under `packages/web/src/features/admin/` with the existing `AdminPanelProps` shape. Register its id, label, description, permissions, and component in `panels.ts`.
-4. The existing `/admin/<id>` page loop and `packages/web/src/client/admin.tsx` consume that registry. Hiding a panel is not authorization: its API must enforce the same permission independently.
+4. The existing `/admin/<id>` page loop and `adminPanelIsland` in `packages/web/src/features/admin/panels.ts` consume that registry. Hiding a panel is not authorization: its API must enforce the same permission independently.
 
 For the Garden reset vertical slice, grant a resource action, protect its endpoint, then list the UI separately.
 
@@ -252,6 +250,6 @@ npm run build
 
 `check` includes formatting validation; `npm run format` writes changes. Inspect those changes rather than silently formatting unrelated work. Existing focused test boundaries are `packages/server/src/services.test.ts` and `packages/web/src/features/kanban/kanban.test.ts`. Add regression coverage for a concrete behavior or failure, not simply for a changed filename.
 
-For runtime changes, start the build with `npm run start` using suitable local environment settings. Check `/health/live`, `/health/ready`, and affected routes. For auth changes, exercise allowed/denied behavior; for browser changes, check hydration and relevant keyboard/offline/reconnect behavior. For data changes, use a disposable database and confirm restart persistence. Never run destructive checks against the only copy of real data.
+Iterate with `npm run dev` ([what it reloads](getting-started.md#clean-checkout)), but verify offline, service-worker, caching, and asset-preload behavior against the build: `npm run dev` serves source modules and no worker. For runtime changes, start the build with `npm run start` using suitable local environment settings. Check `/health/live`, `/health/ready`, and affected routes. For auth changes, exercise allowed/denied behavior; for browser changes, check hydration and relevant keyboard/offline/reconnect behavior. For data changes, use a disposable database and confirm restart persistence. Never run destructive checks against the only copy of real data.
 
 CI configuration in [verify.yml](../.github/workflows/verify.yml) runs frozen install, check, tests, and build on Ubuntu and Windows with Node 24.21.0. Its Linux production smoke checks health and `/login`; it does not establish SMTP delivery, proxy configuration, browser behavior, or remote deployment success. Inspect actual CI results before claiming a pass.

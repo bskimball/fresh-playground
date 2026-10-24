@@ -6,7 +6,6 @@ import { Exit } from "effect"
 import { AsyncResult } from "effect/reactivity"
 import { useState } from "react"
 import { ApiClient } from "../../client/ApiClient.ts"
-import { AppTheme } from "../../components/AppTheme.tsx"
 import { text } from "../../styles/text.ts"
 import { colors, media } from "../../styles/tokens.stylex.ts"
 import { publishGardenMutation } from "../terrarium/freshness.ts"
@@ -32,67 +31,65 @@ export default function GardenPanel() {
   }
 
   return (
-    <AppTheme>
-      <Card xstyle={styles.card}>
-        <div aria-live="polite" {...stylex.props(styles.telemetryWrap)}>
-          {AsyncResult.match(garden, {
-            onInitial: () => <p {...stylex.props(styles.summary)}>Loading…</p>,
-            onFailure: () => <p {...stylex.props(styles.summary)}>The garden is unreachable.</p>,
-            onSuccess: ({ value }) => (
-              <div {...stylex.props(styles.statsGrid)}>
-                <div {...stylex.props(styles.statTile)}>
-                  <span {...stylex.props(styles.statLabel)}>Soil moisture</span>
-                  <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
-                    {value.moisture}%
-                  </strong>
-                </div>
-                <div {...stylex.props(styles.statTile)}>
-                  <span {...stylex.props(styles.statLabel)}>Sunlight</span>
-                  <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
-                    {value.sunlight}%
-                  </strong>
-                </div>
-                <div {...stylex.props(styles.statTile)}>
-                  <span {...stylex.props(styles.statLabel)}>Total waterings</span>
-                  <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
-                    {value.waters}
-                  </strong>
-                </div>
-                <div {...stylex.props(styles.statTile)}>
-                  <span {...stylex.props(styles.statLabel)}>Journal entries</span>
-                  <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
-                    {value.journal.length}
-                  </strong>
-                </div>
+    <Card xstyle={styles.card}>
+      <div aria-live="polite" {...stylex.props(styles.telemetryWrap)}>
+        {AsyncResult.match(garden, {
+          onInitial: () => <p {...stylex.props(styles.summary)}>Loading…</p>,
+          onFailure: () => <p {...stylex.props(styles.summary)}>The garden is unreachable.</p>,
+          onSuccess: ({ value }) => (
+            <div {...stylex.props(styles.statsGrid)}>
+              <div {...stylex.props(styles.statTile)}>
+                <span {...stylex.props(styles.statLabel)}>Soil moisture</span>
+                <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
+                  {value.moisture}%
+                </strong>
               </div>
-            ),
-          })}
-        </div>
+              <div {...stylex.props(styles.statTile)}>
+                <span {...stylex.props(styles.statLabel)}>Sunlight</span>
+                <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
+                  {value.sunlight}%
+                </strong>
+              </div>
+              <div {...stylex.props(styles.statTile)}>
+                <span {...stylex.props(styles.statLabel)}>Total waterings</span>
+                <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
+                  {value.waters}
+                </strong>
+              </div>
+              <div {...stylex.props(styles.statTile)}>
+                <span {...stylex.props(styles.statLabel)}>Journal entries</span>
+                <strong {...stylex.props(text.serif, text.tabular, styles.statValue)}>
+                  {value.journal.length}
+                </strong>
+              </div>
+            </div>
+          ),
+        })}
+      </div>
 
-        <div {...stylex.props(styles.dangerZone)}>
-          <div {...stylex.props(styles.dangerCopy)}>
-            <strong {...stylex.props(styles.dangerTitle)}>Reset shared conservatory</strong>
-            <p {...stylex.props(styles.summary, text.pretty)}>
-              Restores moisture and sunlight to their initial balance and clears all recorded field
-              journal entries.
-            </p>
-          </div>
-          <Button
-            variant="destructive"
-            label="Reset garden"
-            isLoading={pending}
-            isDisabled={pending}
-            onClick={() => void onReset()}
-          />
-        </div>
-
-        {message && (
-          <p role="status" {...stylex.props(styles.statusPill)}>
-            {message}
+      <div {...stylex.props(styles.dangerZone)}>
+        <div {...stylex.props(styles.dangerCopy)}>
+          <strong {...stylex.props(styles.dangerTitle)}>Reset shared conservatory</strong>
+          <p {...stylex.props(styles.summary, text.pretty)}>
+            Restores moisture and sunlight to their initial balance and clears all recorded field
+            journal entries.
           </p>
-        )}
-      </Card>
-    </AppTheme>
+        </div>
+        <Button
+          variant="destructive"
+          label="Reset garden"
+          isLoading={pending}
+          isDisabled={pending}
+          onClick={() => void onReset()}
+        />
+      </div>
+
+      {message && (
+        <p role="status" {...stylex.props(styles.statusPill)}>
+          {message}
+        </p>
+      )}
+    </Card>
   )
 }
 

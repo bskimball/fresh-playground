@@ -1,4 +1,5 @@
 import {
+  AppApi,
   GardenSaturated,
   type GardenSettings,
   type Garden as GardenView,
@@ -6,6 +7,7 @@ import {
   SATURATED_AT,
 } from "@playground/contract"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema } from "effect"
+import { HttpApiBuilder } from "effect/http-api"
 import { Sqlite } from "./Sqlite.ts"
 
 const JOURNAL_LIMIT = 20
@@ -206,3 +208,16 @@ export class Garden extends Context.Service<
     }),
   )
 }
+
+export const GardenHandlers = HttpApiBuilder.group(
+  AppApi,
+  "garden",
+  Effect.fn(function* (handlers) {
+    const garden = yield* Garden
+    return handlers.handleAll({
+      get: () => garden.get,
+      water: () => garden.water,
+      settings: ({ payload }) => garden.updateSettings(payload),
+    })
+  }),
+)

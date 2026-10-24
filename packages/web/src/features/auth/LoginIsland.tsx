@@ -7,7 +7,6 @@ import type { SignInMethods } from "@playground/contract"
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, useState } from "react"
 import { defineIsland } from "../../client/hydrateIsland.ts"
-import { AppTheme } from "../../components/AppTheme.tsx"
 import { Icon } from "../../components/Icon.tsx"
 import { text } from "../../styles/text.ts"
 import { colors, media } from "../../styles/tokens.stylex.ts"
@@ -20,7 +19,7 @@ export interface LoginProps {
   readonly error?: string | undefined
 }
 
-export const loginIsland = defineIsland<LoginProps>("login")
+export const loginIsland = defineIsland("login", LoginIsland)
 
 const providerLabels = { google: "Google", microsoft: "Microsoft" } as const
 
@@ -85,141 +84,139 @@ export default function LoginIsland({ methods, next, error }: LoginProps) {
   const hasEmailForm = methods.password || methods.magicLink
 
   return (
-    <AppTheme>
-      <Card xstyle={styles.card}>
-        <header {...stylex.props(styles.header)}>
-          <div {...stylex.props(styles.emblem)} aria-hidden="true">
-            <Icon name="leaf" size={22} />
-          </div>
-          <p {...stylex.props(text.eyebrow, styles.eyebrow)}>CONSERVATORY ACCESS</p>
-          <h1 {...stylex.props(text.serif, styles.title)}>
-            {mode === "signIn" ? "Welcome back" : "Join the garden"}
-          </h1>
-          <p {...stylex.props(styles.subtitle, text.pretty)}>
-            Sign in to tend shared spaces and sync your preferences.
-          </p>
-        </header>
+    <Card xstyle={styles.card}>
+      <header {...stylex.props(styles.header)}>
+        <div {...stylex.props(styles.emblem)} aria-hidden="true">
+          <Icon name="leaf" size={22} />
+        </div>
+        <p {...stylex.props(text.eyebrow, styles.eyebrow)}>CONSERVATORY ACCESS</p>
+        <h1 {...stylex.props(text.serif, styles.title)}>
+          {mode === "signIn" ? "Welcome back" : "Join the garden"}
+        </h1>
+        <p {...stylex.props(styles.subtitle, text.pretty)}>
+          Sign in to tend shared spaces and sync your preferences.
+        </p>
+      </header>
 
-        {methods.password && (
-          <div {...stylex.props(styles.modeTrack)} role="group" aria-label="Account mode">
-            <button
-              type="button"
-              aria-pressed={mode === "signIn"}
-              onClick={() => setMode("signIn")}
-              {...stylex.props(styles.modeTab, mode === "signIn" && styles.modeTabActive)}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              aria-pressed={mode === "signUp"}
-              onClick={() => setMode("signUp")}
-              {...stylex.props(styles.modeTab, mode === "signUp" && styles.modeTabActive)}
-            >
-              Create account
-            </button>
-          </div>
-        )}
+      {methods.password && (
+        <div {...stylex.props(styles.modeTrack)} role="group" aria-label="Account mode">
+          <button
+            type="button"
+            aria-pressed={mode === "signIn"}
+            onClick={() => setMode("signIn")}
+            {...stylex.props(styles.modeTab, mode === "signIn" && styles.modeTabActive)}
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === "signUp"}
+            onClick={() => setMode("signUp")}
+            {...stylex.props(styles.modeTab, mode === "signUp" && styles.modeTabActive)}
+          >
+            Create account
+          </button>
+        </div>
+      )}
 
-        {status.kind === "failed" && <Banner status="error" title={status.message} />}
-        {status.kind === "sent" && (
-          <Banner
-            status="success"
-            title="Check your email"
-            description={`We sent a sign-in link to ${status.email}.`}
-          />
-        )}
+      {status.kind === "failed" && <Banner status="error" title={status.message} />}
+      {status.kind === "sent" && (
+        <Banner
+          status="success"
+          title="Check your email"
+          description={`We sent a sign-in link to ${status.email}.`}
+        />
+      )}
 
-        {methods.social.length > 0 && (
-          <div {...stylex.props(styles.stack)}>
-            {methods.social.map((provider) => (
-              <Button
-                key={provider}
-                label={`Continue with ${providerLabels[provider]}`}
-                width="100%"
-                isDisabled={pending}
-                onClick={() => void signInWith(provider)}
-              />
-            ))}
-          </div>
-        )}
+      {methods.social.length > 0 && (
+        <div {...stylex.props(styles.stack)}>
+          {methods.social.map((provider) => (
+            <Button
+              key={provider}
+              label={`Continue with ${providerLabels[provider]}`}
+              width="100%"
+              isDisabled={pending}
+              onClick={() => void signInWith(provider)}
+            />
+          ))}
+        </div>
+      )}
 
-        {methods.social.length > 0 && hasEmailForm && <Divider label="or" />}
+      {methods.social.length > 0 && hasEmailForm && <Divider label="or" />}
 
-        {hasEmailForm && (
-          <form {...stylex.props(styles.stack)} onSubmit={(event) => void submitPassword(event)}>
-            {methods.password && mode === "signUp" && (
-              <TextInput
-                label="Name"
-                value={name}
-                onChange={setName}
-                autoComplete="name"
-                isRequired
-              />
-            )}
+      {hasEmailForm && (
+        <form {...stylex.props(styles.stack)} onSubmit={(event) => void submitPassword(event)}>
+          {methods.password && mode === "signUp" && (
             <TextInput
-              label="Email"
-              type="email"
-              value={email}
-              onChange={setEmail}
-              autoComplete="email"
+              label="Name"
+              value={name}
+              onChange={setName}
+              autoComplete="name"
               isRequired
             />
-            {methods.password && (
-              <>
-                <TextInput
-                  label="Password"
-                  type="password"
-                  value={password}
-                  onChange={setPassword}
-                  autoComplete={mode === "signIn" ? "current-password" : "new-password"}
-                  {...(mode === "signUp" ? { description: "At least 8 characters." } : {})}
-                  isRequired
-                />
-                <Button
-                  type="submit"
-                  variant="primary"
-                  width="100%"
-                  label={mode === "signIn" ? "Sign in" : "Create account"}
-                  isLoading={pending}
-                  isDisabled={pending}
-                />
-              </>
-            )}
-            {methods.magicLink && (
-              <Button
-                label="Email me a sign-in link"
-                width="100%"
-                variant={methods.password ? "ghost" : "primary"}
-                isDisabled={pending || email === ""}
-                onClick={() => void sendMagicLink()}
-              />
-            )}
-          </form>
-        )}
-
-        {methods.password && (
-          <p {...stylex.props(styles.switch)}>
-            {mode === "signIn" ? "New here?" : "Already have an account?"}{" "}
-            <button
-              type="button"
-              {...stylex.props(styles.link)}
-              onClick={() => setMode(mode === "signIn" ? "signUp" : "signIn")}
-            >
-              {mode === "signIn" ? "Create an account" : "Sign in"}
-            </button>
-          </p>
-        )}
-
-        {!hasEmailForm && methods.social.length === 0 && (
-          <Banner
-            status="warning"
-            title="No sign-in methods are configured"
-            description="Set provider credentials or enable AUTH_PASSWORD in the server environment."
+          )}
+          <TextInput
+            label="Email"
+            type="email"
+            value={email}
+            onChange={setEmail}
+            autoComplete="email"
+            isRequired
           />
-        )}
-      </Card>
-    </AppTheme>
+          {methods.password && (
+            <>
+              <TextInput
+                label="Password"
+                type="password"
+                value={password}
+                onChange={setPassword}
+                autoComplete={mode === "signIn" ? "current-password" : "new-password"}
+                {...(mode === "signUp" ? { description: "At least 8 characters." } : {})}
+                isRequired
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                width="100%"
+                label={mode === "signIn" ? "Sign in" : "Create account"}
+                isLoading={pending}
+                isDisabled={pending}
+              />
+            </>
+          )}
+          {methods.magicLink && (
+            <Button
+              label="Email me a sign-in link"
+              width="100%"
+              variant={methods.password ? "ghost" : "primary"}
+              isDisabled={pending || email === ""}
+              onClick={() => void sendMagicLink()}
+            />
+          )}
+        </form>
+      )}
+
+      {methods.password && (
+        <p {...stylex.props(styles.switch)}>
+          {mode === "signIn" ? "New here?" : "Already have an account?"}{" "}
+          <button
+            type="button"
+            {...stylex.props(styles.link)}
+            onClick={() => setMode(mode === "signIn" ? "signUp" : "signIn")}
+          >
+            {mode === "signIn" ? "Create an account" : "Sign in"}
+          </button>
+        </p>
+      )}
+
+      {!hasEmailForm && methods.social.length === 0 && (
+        <Banner
+          status="warning"
+          title="No sign-in methods are configured"
+          description="Set provider credentials or enable AUTH_PASSWORD in the server environment."
+        />
+      )}
+    </Card>
   )
 }
 
