@@ -7,8 +7,8 @@ A reusable, single-instance web app template with an Effect HTTP server, React i
 Use Node.js **24.21.0** (the CI target) and npm. From a clean checkout:
 
 ```sh
-npm exec --package=vite-plus@1.3.0 -- vp install --frozen-lockfile
-npm exec -- vp run dev
+npm install
+npm run dev
 ```
 
 Open <http://127.0.0.1:4321> without a `.env`, or <http://localhost:4321> if you copy the supplied `.env.example` unchanged. Keep one origin for sign-in. Create your account at `/login` **before allowing public access**: the first account becomes admin. See [getting started](docs/getting-started.md) for configuration, shell caveats, renaming, and demo removal.
@@ -26,16 +26,16 @@ Open <http://127.0.0.1:4321> without a `.env`, or <http://localhost:4321> if you
 
 Run commands from the repository root; Vite+ is a local dependency, not a global prerequisite.
 
-| Command                     | Purpose                                              |
-| --------------------------- | ---------------------------------------------------- |
-| `npm exec -- vp run dev`    | Build/watch and run the Effect server                |
-| `npm exec -- vp run check`  | Oxlint, Oxfmt check, and workspace TypeScript checks |
-| `npm exec -- vp run test`   | Run tests once                                       |
-| `npm exec -- vp run build`  | Build into `packages/web/dist`                       |
-| `npm exec -- vp run start`  | Serve the existing build                             |
-| `npm exec -- vp run format` | Format repository files; modifies files              |
+| Command          | Purpose                                              |
+| ---------------- | ---------------------------------------------------- |
+| `npm run dev`    | Build/watch and run the Effect server                |
+| `npm run check`  | Oxlint, Oxfmt check, and workspace TypeScript checks |
+| `npm run test`   | Run tests once                                       |
+| `npm run build`  | Build into `packages/web/dist`                       |
+| `npm run start`  | Serve the existing build                             |
+| `npm run format` | Format repository files; modifies files              |
 
-Vite bundles; it is not the app server. Use `vp run dev`, not `vp dev`. The stack uses Effect services and `AtomHttpApi`, XState for coordinated browser state, Astryx components, StyleX, and React Compiler. [AGENTS.md](AGENTS.md) records repository conventions. Portable agent workflows live in [add-feature](.agents/skills/add-feature/SKILL.md) and [verify-change](.agents/skills/verify-change/SKILL.md).
+Vite bundles; it is not the app server. The stack uses Effect services and `AtomHttpApi`, XState for coordinated browser state, Astryx components, StyleX, and React Compiler. [AGENTS.md](AGENTS.md) records repository conventions. Portable agent workflows live in [add-feature](.agents/skills/add-feature/SKILL.md) and [verify-change](.agents/skills/verify-change/SKILL.md).
 
 ## Scope and licensing
 

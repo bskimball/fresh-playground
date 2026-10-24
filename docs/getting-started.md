@@ -6,20 +6,20 @@
 
 1. Clone or copy this repository, then open a terminal at its root.
 2. Use Node.js **24.21.0** and npm. This matches the configured CI runtime; another Node version is not a verified substitute for the built-in `node:sqlite` dependency.
-3. Install the locked dependencies:
+3. Install dependencies:
 
    ```sh
-   npm exec --package=vite-plus@1.3.0 -- vp install --frozen-lockfile
+   npm install
    ```
 
 4. Optionally copy [`.env.example`](../.env.example) to `.env` at the repository root using your editor or file manager. No `.env` is required for local development.
 5. Run:
 
    ```sh
-   npm exec -- vp run dev
+   npm run dev
    ```
 
-The dev script builds once if needed, then watches the bundles and restarts the Effect server. It uses shell grouping and `&`; equivalent watcher behavior across development shells/platforms has not been established. If the combined script fails, run `npm exec -- vp -C packages/web build --app --watch` in one terminal and `node --env-file-if-exists=../../.env --watch-path=dist/server dist/server/main.js` in another terminal **whose working directory is `packages/web`**, after an initial `npm exec -- vp run build` at the root. This is a diagnostic alternative, not a claim of platform support.
+The dev script builds once if needed, then watches the bundles and restarts the Effect server. It uses shell grouping and `&`; equivalent watcher behavior across development shells/platforms has not been established. If the combined script fails, run `npm exec -- vp -C packages/web build --app --watch` in one terminal and `node --env-file-if-exists=../../.env --watch-path=dist/server dist/server/main.js` in another terminal **whose working directory is `packages/web`**, after an initial `npm run build` at the root. This is a diagnostic alternative, not a claim of platform support.
 
 Without an env file, open <http://127.0.0.1:4321>. The sample env explicitly sets `BETTER_AUTH_URL=http://localhost:4321`; if using it, open <http://localhost:4321>. Use the same origin throughout authentication and OAuth configuration.
 
@@ -32,6 +32,17 @@ The demo Garden and Kanban APIs allow public writes. Admin permissions protect a
 ## Local configuration
 
 The workspace scripts load the optional root `.env` via Node's `--env-file-if-exists`. Existing shell variables take precedence. Empty values are treated as absent by the configuration layer; invalid configured values can fail startup.
+
+For a minimal local `.env`, use these settings from [`.env.example`](../.env.example), with the log transport selected explicitly:
+
+```dotenv
+NODE_ENV=development
+BETTER_AUTH_URL=http://localhost:4321
+AUTH_PASSWORD=true
+MAIL_TRANSPORT=log
+```
+
+This changes the browser/auth origin from the no-env default `http://127.0.0.1:4321` to `http://localhost:4321`, just as copying the full sample does. Open the localhost URL consistently. No secret is supplied here; production secrets and SMTP belong in the [deployment configuration](deployment.md#provision-and-start), not this local example.
 
 - `HOST=127.0.0.1`, `PORT=4321`, and `LOG_LEVEL=Info` are defaults. Log levels are `Trace`, `Debug`, `Info`, `Warn`, `Error`, `Fatal`, or `None`.
 - `DATABASE_PATH` defaults to `data/app.db`, relative to the process working directory: `packages/web` when using the root scripts. Garden, Kanban, and authentication persist in that SQLite file. Its parent directory is created automatically.
@@ -46,7 +57,7 @@ See [deployment](deployment.md) for production secrets, mail settings, and disk 
 
 1. Change the root package name and the three workspace names in `packages/contract/package.json`, `packages/server/package.json`, and `packages/web/package.json` together.
 2. Replace `@playground/contract` and `@playground/server` in workspace dependency keys and source imports. Check for any remaining old names before proceeding. Keep workspace directory paths unless you also update every script/config/reference using those paths.
-3. Run `npm exec -- vp install` to reconcile `package-lock.json`, then run the [verification commands](development.md#verification).
+3. Run `npm install` to reconcile `package-lock.json`, then run the [verification commands](development.md#verification).
 4. Replace branding in `packages/web/src/components/Shell.tsx`, `packages/web/src/server/Document.tsx`, and `packages/web/src/server/Pwa.ts`, plus page titles/content in `packages/web/src/server/pages.tsx` and the demo components. Review browser storage/channel names in `packages/web/src/machines/offlineSync.ts`, feature offline modules, `packages/web/src/client/sw.ts`, and the navigation storage key in `packages/web/src/client/performance.ts` if reusing an existing origin. Changing keys can strand pending edits; export or finish them first.
 5. Set your own public auth URL and OAuth application configuration. Keep applicable MIT notices; review dependency/font licenses and resolve the [artwork publication prerequisite](releases.md#publication-prerequisites).
 

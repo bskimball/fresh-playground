@@ -10,7 +10,7 @@ The host needs Node.js 24.21.0, installed dependencies, and the build output. Ke
 
 ## Provision and start
 
-1. Complete the [publication prerequisites](releases.md#publication-prerequisites) if distributing publicly. Install the lockfile, run checks/tests, and build from the repository root using the [verification commands](development.md#verification).
+1. Complete the [publication prerequisites](releases.md#publication-prerequisites) if distributing publicly. Run `npm ci` for a frozen install, run checks/tests, and build from the repository root using the [verification commands](development.md#verification).
 2. Provision a persistent directory writable by the app's OS user. Set `DATABASE_PATH` to an **absolute path** outside replaceable build directories. It holds authentication and both demo stores; protect access to it and backups.
 3. Configure production environment values. The following are required choices, not a ready-to-use secret file:
 
@@ -28,12 +28,30 @@ The host needs Node.js 24.21.0, installed dependencies, and the build output. Ke
 
    `BETTER_AUTH_SECRET` is required in production. Do not copy a CI-only or documentation secret. Ensure at least one configured sign-in method is usable. Shell environment values override the optional root `.env` loaded by workspace scripts.
 
-4. Start with `npm exec -- vp run start` at the root under your process supervisor. The workspace script's working directory is `packages/web`; a direct `node dist/server/main.js` launch must use that directory or supply equivalent paths/environment handling.
+4. Start with `npm run start` at the root under your process supervisor. The workspace script's working directory is `packages/web`; a direct `node dist/server/main.js` launch must use that directory or supply equivalent paths/environment handling.
 5. Before exposing the proxy publicly, privately reach `/login`, create the owner's account, and confirm `/admin/users` access. The first account becomes admin; the application does not know who the intended owner is. Preserve this database when moving to public traffic.
 6. Route the public HTTPS origin to the internal HTTP listener, preserving request paths, host/origin behavior, and cookies. Configure the proxy to honor private/no-cache page responses; do not shared-cache authenticated HTML or auth/API responses. Expose the internal port only as intended. Set OAuth callbacks to `BETTER_AUTH_URL` plus `/api/auth/callback/google` or `/api/auth/callback/microsoft` if enabling those providers.
 7. Check `/health/live`, `/health/ready`, `/login`, sign-in/sign-out, admin permissions, static assets, and a persistent demo edit across restart. Verify redirects/cookies through the actual TLS proxy, not only loopback. HTTPS is also needed for production service workers.
 
 The demo Garden/Kanban APIs are publicly writable. Protect or replace them before using this template for private application data. Password reset and email verification are not implemented, even with SMTP enabled.
+
+### Check the running listener
+
+These shell examples use the health routes defined in `packages/web/src/server/main.ts`. For the default same-host listener:
+
+```sh
+curl --fail --silent --show-error http://127.0.0.1:4321/health/live
+curl --fail --silent --show-error http://127.0.0.1:4321/health/ready
+```
+
+Expect JSON with `status` equal to `alive` and `ready`, respectively. Adapt the host/port if configured differently. After proxy setup, repeat through your real HTTPS origin (replace the example origin):
+
+```sh
+curl --fail --silent --show-error https://app.example.com/health/live
+curl --fail --silent --show-error https://app.example.com/health/ready
+```
+
+These checks do not establish successful login, mail delivery, or restart persistence; complete step 7 separately.
 
 ## Email and SMTP
 
@@ -66,6 +84,23 @@ The database uses WAL mode: copying only a live `app.db` can omit committed chan
 1. Block new traffic and stop the single app process cleanly; confirm no other process has the database open.
 2. Copy the database **and any existing matching `-wal` and `-shm` sidecars as one stopped snapshot** to a protected backup location. Clean shutdown may remove/checkpoint sidecars; do not assume that it did. Keep the matching app revision, lockfile, and required secret/configuration securely available for recovery. Avoid including unrelated secrets in an ordinary code archive.
 3. Restart and check readiness. Periodically rehearse restoration into an isolated location with disposable configuration; confirm accounts and application state. Choose backup frequency and retention based on acceptable data loss.
+
+Example POSIX shell copy for step 2, **only after traffic is blocked and all database users are stopped**. Replace both placeholder paths; `backup` must be a new snapshot directory under a protected existing parent. Stopping/restarting is deliberately not scripted because it depends on your process supervisor.
+
+```sh
+set -eu
+db='/absolute/path/to/app.db'                    # Your DATABASE_PATH
+backup='/protected/backup/path/snapshot-YYYYMMDD-HHMMSS'
+mkdir -m 700 "$backup"                          # Fails if this snapshot already exists
+cp -p "$db" "$backup/"
+for suffix in -wal -shm; do
+  if [ -f "$db$suffix" ]; then
+    cp -p "$db$suffix" "$backup/"
+  fi
+done
+```
+
+Do not use a partial snapshot if any copy fails. Keep the process stopped until the copy finishes; then restart it and run the health checks above. This copies only the database set, not the matching revision, lockfile, or protected recovery configuration required by step 2.
 
 To restore, stop the process and block traffic again. Preserve the current database set for investigation. Replace the database with the selected stopped snapshot and its matching sidecars; remove stale sidecars from the database being replaced, never mix sets. Restore ownership/permissions and launch the compatible application revision with the intended `DATABASE_PATH` and auth secret. Check health, login/admin access, and data before reopening traffic. Avoid accidental email sends during recovery drills. A restore loses writes after the snapshot; account for browser pending edits before reconnecting clients.
 

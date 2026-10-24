@@ -30,6 +30,20 @@ assets   → manifest lookup → hashed scripts/CSS and static image routes
 
 `packages/web/src/server/main.ts` composes services, pages, auth, API, health, performance, static assets, and middleware. `assets.ts` reads the Vite manifest, combines shared client CSS with server-generated StyleX CSS, and serves a content-hashed stylesheet linked by every page. React Compiler and StyleX compilation are configured in `packages/web/vite.config.ts`. Figtree and Fraunces are bundled from Fontsource, not a font CDN.
 
+### Share layers at the server boundary
+
+Excerpt from `packages/web/src/server/main.ts`; imports, asset loading, and the rest of the app composition remain in source:
+
+```ts
+const Services = Layer.mergeAll(
+  Garden.layer,
+  Kanban.layer,
+  Auth.layer.pipe(Layer.provide(Mailer.layer)),
+).pipe(Layer.provide(Sqlite.layer))
+```
+
+The same file provides `Services` once to the merged `App` layer containing `ApiRoutes`, `AuthRoutes`, `PageRoutes(assets.pages)`, and `Health`, alongside assets and middleware. This is the composition boundary: pages and HTTP handlers share service instances and the SQLite connection rather than constructing a store for every request. Browser code crosses the typed HTTP contract instead of importing these server layers.
+
 ## Persistence and process model
 
 `packages/server/src/Sqlite.ts` opens a shared `node:sqlite` connection, enables WAL for file-backed databases, and closes it on scope release. The default file is `packages/web/data/app.db` when launched through the root scripts.
