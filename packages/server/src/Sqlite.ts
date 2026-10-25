@@ -16,6 +16,48 @@ export class DatabasePath extends Context.Service<DatabasePath, string>()("serve
 
 /** Shared SQLite connection (`node:sqlite` in WAL mode for file-backed stores). */
 export class Sqlite extends Context.Service<Sqlite, DatabaseSync>()("server/Sqlite") {
+  /**
+   * Runs ordered, idempotent schema migrations for a named service namespace
+   * inside a savepoint and records the applied version in `schema_migrations`.
+   */
+  static readonly migrate = (
+    database: DatabaseSync,
+    namespace: string,
+    migrations: ReadonlyArray<string | ((db: DatabaseSync) => void)>,
+  ): number => {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        namespace TEXT PRIMARY KEY,
+        version INTEGER NOT NULL
+      )
+    `)
+    const row = database
+      .prepare("SELECT version FROM schema_migrations WHERE namespace = ?")
+      .get(namespace) as { readonly version: number } | undefined
+    let current = row?.version ?? 0
+    const upsert = database.prepare(`
+      INSERT INTO schema_migrations (namespace, version)
+      VALUES (?, ?)
+      ON CONFLICT(namespace) DO UPDATE SET version = excluded.version
+    `)
+    for (let index = current; index < migrations.length; index++) {
+      const nextVersion = index + 1
+      const step = migrations[index]!
+      database.exec("SAVEPOINT sqlite_migration")
+      try {
+        if (typeof step === "string") database.exec(step)
+        else step(database)
+        upsert.run(namespace, nextVersion)
+        database.exec("RELEASE sqlite_migration")
+        current = nextVersion
+      } catch (error) {
+        database.exec("ROLLBACK TO sqlite_migration; RELEASE sqlite_migration")
+        throw error
+      }
+    }
+    return current
+  }
+
   static readonly make = (databasePath: string) =>
     Effect.acquireRelease(
       Effect.sync(() => {

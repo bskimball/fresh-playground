@@ -1,3 +1,4 @@
+import { RegistryProvider } from "@effect/atom-react"
 import { createContext, type ReactNode, useContext } from "react"
 import { renderToString } from "react-dom/server"
 import type { HydrationTrigger, IslandDefinition } from "../client/hydrateIsland.ts"
@@ -22,8 +23,18 @@ const prefetchSelector = `a:is(${publicLinks
   .map((link) => `[href='${link.href}']`)
   .join(", ")}):not([download]):not([target])`
 
+export interface OpenGraphMeta {
+  readonly title?: string | undefined
+  readonly description?: string | undefined
+  readonly type?: "website" | "article" | undefined
+  readonly image?: string | undefined
+}
+
 export function Document({
   title,
+  description,
+  canonical,
+  openGraph,
   theme,
   css,
   fonts = [],
@@ -32,6 +43,9 @@ export function Document({
   bodyHtml,
 }: {
   title: string
+  description?: string | undefined
+  canonical?: string | undefined
+  openGraph?: OpenGraphMeta | undefined
   theme: ThemePreference
   css: string
   fonts?: ReadonlyArray<string> | undefined
@@ -39,6 +53,9 @@ export function Document({
   preloads?: ReadonlyArray<string> | undefined
   bodyHtml: string
 }) {
+  const fullTitle = `${title} · Little world`
+  const ogTitle = openGraph?.title ?? (description || openGraph ? fullTitle : undefined)
+  const ogDescription = openGraph?.description ?? description
   return (
     <html
       lang="en"
@@ -49,7 +66,13 @@ export function Document({
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>{`${title} · Little world`}</title>
+        <title>{fullTitle}</title>
+        {description ? <meta name="description" content={description} /> : null}
+        {canonical ? <link rel="canonical" href={canonical} /> : null}
+        {ogTitle ? <meta property="og:title" content={ogTitle} /> : null}
+        {ogDescription ? <meta property="og:description" content={ogDescription} /> : null}
+        {openGraph?.type ? <meta property="og:type" content={openGraph.type} /> : null}
+        {openGraph?.image ? <meta property="og:image" content={openGraph.image} /> : null}
         {theme === "system" ? (
           <>
             <meta name="theme-color" content="#f7f5ee" media="(prefers-color-scheme: light)" />
@@ -98,6 +121,9 @@ export function Document({
 
 export function renderDocument({
   title,
+  description,
+  canonical,
+  openGraph,
   theme,
   current,
   css,
@@ -108,6 +134,9 @@ export function renderDocument({
   children,
 }: {
   title: string
+  description?: string | undefined
+  canonical?: string | undefined
+  openGraph?: OpenGraphMeta | undefined
   theme: ThemePreference
   current: Section
   css: string
@@ -140,9 +169,11 @@ export function renderDocument({
   for (const slot of slots) {
     if (slot.hydrate === "load") eagerIslands.add(slot.name)
     const islandHtml = renderToString(
-      <ThemePreferenceContext value={theme}>
-        <AppTheme>{slot.render()}</AppTheme>
-      </ThemePreferenceContext>,
+      <RegistryProvider>
+        <ThemePreferenceContext value={theme}>
+          <AppTheme>{slot.render()}</AppTheme>
+        </ThemePreferenceContext>
+      </RegistryProvider>,
     )
     bodyHtml = bodyHtml.replace(slot.marker, () => islandHtml)
   }
@@ -152,6 +183,9 @@ export function renderDocument({
   return `<!DOCTYPE html>${renderToString(
     <Document
       title={title}
+      description={description}
+      canonical={canonical}
+      openGraph={openGraph}
       theme={theme}
       css={css}
       fonts={fonts}
@@ -183,16 +217,18 @@ export function Island<P, Name extends IslandName = IslandName>(
         render: () => island.render(props),
       })
     : renderToString(
-        <ThemePreferenceContext value={theme}>
-          <AppTheme>{island.render(props)}</AppTheme>
-        </ThemePreferenceContext>,
+        <RegistryProvider>
+          <ThemePreferenceContext value={theme}>
+            <AppTheme>{island.render(props)}</AppTheme>
+          </ThemePreferenceContext>
+        </RegistryProvider>,
       )
 
   return (
     <>
       <div
         data-island={island.name}
-        data-hydrate={island.hydrate === "visible" ? "visible" : undefined}
+        data-hydrate={island.hydrate === "load" ? undefined : island.hydrate}
         inert
         aria-busy="true"
         data-props={encodedProps === undefined ? undefined : JSON.stringify(encodedProps)}

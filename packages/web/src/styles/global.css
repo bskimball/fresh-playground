@@ -89,20 +89,8 @@ html[data-theme="dark"] {
   [data-nav-pill] {
     view-transition-name: nav-active-pill;
   }
-  [data-nav-item="garden"] {
-    view-transition-name: nav-item-garden;
-  }
-  [data-nav-item="kanban"] {
-    view-transition-name: nav-item-kanban;
-  }
-  [data-nav-item="journal"] {
-    view-transition-name: nav-item-journal;
-  }
-  [data-nav-item="about"] {
-    view-transition-name: nav-item-about;
-  }
-  [data-nav-item="admin"] {
-    view-transition-name: nav-item-admin;
+  [data-nav-item] {
+    view-transition-class: nav-item;
   }
 
   ::view-transition-group(root) {
@@ -122,11 +110,7 @@ html[data-theme="dark"] {
     overflow: clip;
   }
 
-  ::view-transition-group(nav-item-garden),
-  ::view-transition-group(nav-item-kanban),
-  ::view-transition-group(nav-item-journal),
-  ::view-transition-group(nav-item-about),
-  ::view-transition-group(nav-item-admin) {
+  ::view-transition-group(.nav-item) {
     z-index: 2;
     animation-duration: 280ms;
     animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);

@@ -10,7 +10,7 @@ Unless explicitly labeled as a new feature example, code blocks below are excerp
 
 1. Add the page's section to `sections` in `packages/web/src/components/sections.ts`: its `href`, `label`, and `icon`; `nav: "everyone"` or `nav: "admins"` to list it in navigation (public links are also prefetched); and `offline: true` only for public pages the service worker may serve from cache. Private pages never set `offline`.
 2. Add the route to the feature's `packages/web/src/features/<feature>/routes.tsx`, creating it if needed as an `HttpRouter.use` layer like `KanbanPages`. Read Effect services directly, as `/journal` does; do not make an HTTP call back into the same process.
-3. Return `yield* page.render(request, { title, current, children })`, where `page` is the `Page` service from `packages/web/src/server/Page.ts`. It looks up the signed-in viewer, renders `Document` with theme and asset links, and sets private caching. Pass `viewer` only when the route already resolved it with `page.viewer` to make a decision, as `/login` and `/admin` do. Shared presentation belongs in `packages/web/src/components/`.
+3. Return `yield* page.render(request, { title, description, current, children })`, where `page` is the `Page` service from `packages/web/src/server/Page.ts`. It looks up the signed-in viewer, renders `Document` with theme, head metadata (`description`, `canonical`, `openGraph`), and asset links, and sets private caching (plus optional route `headers`). Pass `viewer` only when the route already resolved it with `page.viewer` to make a decision, as `/login` and `/admin` do. Use `hrefFor`, `adminPanelHref`, and `loginHref` from `sections.ts` for typed route paths. Shared presentation belongs in `packages/web/src/components/`.
 4. For a new `routes.tsx`, add its layer to `PageRoutes` in `packages/web/src/server/pages.ts`.
 
 A static page needs no page-specific browser entry; the common `performance.ts` entry still loads. `GardenPages` in `packages/web/src/features/terrarium/routes.tsx` connects steps 2–3: acquire the services once, read them per request, then render.
@@ -42,7 +42,7 @@ Done when the route renders directly from its URL and navigation works, includin
 
 Use `packages/web/src/features/kanban/KanbanIsland.tsx` and `packages/web/src/client/islandRegistry.ts` as the end-to-end reference.
 
-1. Define the component and bind it with `defineIsland` in the feature. Pass `{ codec: schemaJsonCodec(Schema) }` from `packages/web/src/machines/offlineSync.ts` for schema-backed props (preserving `Date` values across JSON, while keeping `hydrateIsland.ts` free of Effect runtime imports on non-Effect islands), `{ hydrate: "visible" }` for viewport-triggered hydration, or omit options for plain JSON-safe or `void` props. Both server rendering and browser hydration wrap the island in `AppTheme` automatically.
+1. Define the component and bind it with `defineIsland` in the feature. Pass `{ codec: schemaJsonCodec(Schema) }` from `packages/web/src/machines/offlineSync.ts` for schema-backed props (preserving `Date` values across JSON, while keeping `hydrateIsland.ts` free of Effect runtime imports on non-Effect islands), `{ hydrate: "visible" | "idle" }` for deferred hydration, or omit options for eager (`"load"`) plain JSON-safe or `void` props. Server rendering isolates each island slot in its own `RegistryProvider`, and both server rendering and browser hydration wrap the island in `AppTheme` automatically.
 2. Register the island once in `packages/web/src/client/islandRegistry.ts`: its source path, `offline` precache flag, and `load` import. The key must match the name passed to `defineIsland`; the registry type rejects a mismatch, and `<Island>` only accepts registered islands. `performance.ts` boots registered islands present on the page, and `assets.ts` resolves each island's built chunk and modulepreloads from the same entry.
 3. In the feature's `routes.tsx`, render `<Island island={...} props={...} />` (or `<Island island={...} />` when `props` is `void`). `renderDocument` renders each island in its own isolated React root and emits `<link rel="modulepreload">` tags for eager islands rendered on that page.
 4. Use XState for coordinated state, with a `.machine.ts` file. Use existing `fromEffect` and `clientRuntime` for Effect actors, or `ApiClient.query`/`ApiClient.mutation` atoms with `@effect/atom-react` for reactive data. Reuse Astryx and StyleX patterns.
@@ -128,9 +128,10 @@ const GardenHandlers = HttpApiBuilder.group(
 
 ```tsx
 const gardenAtom = ApiClient.query("garden", "get", {})
-// Inside LiveStatusIsland:
+// Inside LiveStatusIsland(initial: LiveStatusSnapshot):
+useAtomInitialValues([seedAtom(helloAtom, initial.hello), seedAtom(gardenAtom, initial.garden)])
 const garden = useAtomValue(gardenAtom)
-// In its rendered value; the surrounding server-render loading guard is omitted:
+// In its rendered value:
 AsyncResult.match(garden, {
   onInitial: () => "Loading…",
   onFailure: () => "The garden is unreachable.",
@@ -141,17 +142,18 @@ AsyncResult.match(garden, {
 })
 ```
 
-`ApiClient` derives endpoint names and result types from `AppApi`; `useAtomValue` and `AsyncResult` handle the request lifecycle without a handwritten `fetch`. This read uses the same Garden response schema returned by the settings write.
+`ApiClient` derives endpoint names and result types from `AppApi`; `seedAtom` + `useAtomInitialValues` seed the server-rendered snapshot into the island's `AtomRegistry` so SSR and hydration render immediately without a redundant initial fetch, while `useAtomRefresh` and `AsyncResult` handle subsequent revalidations.
 
 ### Keep persistence in the service
 
-`packages/server/src/Garden.ts` is the canonical implementation. Its `Garden.layer` acquires `Sqlite`, creates the table, prepares select/upsert statements, loads or seeds state, and only then creates the process-local `Ref`:
+`packages/server/src/Garden.ts` is the canonical implementation. Its `Garden.layer` acquires `Sqlite`, runs `Sqlite.migrate` for its namespace, prepares select/upsert statements, loads or seeds state, and only then creates the process-local `Ref`:
 
 ```ts
 // Inside Garden.layer = Layer.effect(Garden, Effect.gen(function* () { ... })):
 const database = yield * Sqlite
 const events = yield * Events
-database.exec(`
+Sqlite.migrate(database, "garden", [
+  `
   CREATE TABLE IF NOT EXISTS garden_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     moisture INTEGER NOT NULL,
@@ -161,7 +163,8 @@ database.exec(`
     waters INTEGER NOT NULL,
     journal_json TEXT NOT NULL
   )
-`)
+  `,
+])
 // Prepared statements, persist, and loadInitial remain in source.
 const store = yield * Ref.make<GardenStore>(loadInitial(yield * Clock.currentTimeMillis))
 // Inside reset, after obtaining now:
@@ -177,7 +180,7 @@ Done when invalid inputs are rejected by the contract, declared errors reach cal
 
 ## Extend public invalidation
 
-For a new **public** topic, extend `EventTopic` in `packages/contract/src/Events.ts`, the `public_events` topic constraint with an explicit migration, and the resync fallback topic list in server `Events.ts`. Add the topic to `Realtime.ts`'s revision map and its API pathname mapping. Do not only change the TypeScript union: existing databases retain the old SQL constraint.
+For a new **public** topic, add its topic key and snapshot API path to `EVENT_TOPIC_PATHS` and `EVENT_TOPICS` in `packages/contract/src/Events.ts`. Server `Events.ts` automatically widens an existing `public_events` table's `CHECK` constraint and updates its resync fallback list from `EVENT_TOPICS`, and client `Realtime.ts` derives its revision map and API pathname mapping from `EVENT_TOPIC_PATHS`.
 
 Use `events.commit(topic, () => synchronousDomainWrite())` before changing a process-local view. Register your service/handlers in `AppServices`/`ApiRoutes` as above. Add the feature's mutation event/topic pair to `freshnessTopics` in `machines/offlineSync.ts`, then use `createFreshnessChannel(eventName).watch(refresh)` for its existing freshness callback (see the Garden/Kanban offline modules); AtomHttpApi consumers can use `watchRealtime(topic, refresh)` directly, or wrap atom refresh functions in the feature's freshness watcher as `LiveStatusIsland.tsx` does. Return the unsubscribe function on teardown. Do not publish an SSE receipt to BroadcastChannel or enqueue a mutation in response to it. Keep dirty local edits protected and let invalidation trigger a typed read, not a state replacement from the event.
 

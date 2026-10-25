@@ -1,7 +1,14 @@
+import { RegistryProvider, useAtomInitialValues, useAtomValue } from "@effect/atom-react"
 import type { KanbanCard } from "@playground/contract"
+import { AsyncResult } from "effect/reactivity"
+import { createElement } from "react"
+import { renderToString } from "react-dom/server"
 import { describe, expect, it } from "vite-plus/test"
 import { createActor } from "xstate"
+import { ApiClient, seedAtom } from "../../client/ApiClient.ts"
+import { defineIsland } from "../../client/hydrateIsland.ts"
 import { decodeRealtimeTopics, realtimeTopicForPath } from "../../client/Realtime.ts"
+import { adminPanelHref, hrefFor, loginHref } from "../../components/sections.ts"
 import {
   computeNavPillDelta,
   hasThemeCookie,
@@ -9,7 +16,7 @@ import {
   parseTheme,
   themeFromCookie,
 } from "../../components/themeDom.ts"
-import { safeNext } from "../../server/runtime.ts"
+import { safeNext, transformShell } from "../../server/runtime.ts"
 import {
   canAcceptNewCard,
   kanbanMachine,
@@ -168,5 +175,71 @@ describe("safeNext redirect sanitization & theme parsing", () => {
       sx: 1,
       sy: 1,
     })
+  })
+
+  it("builds typed section, admin panel, and login hrefs", () => {
+    expect(hrefFor("garden")).toBe("/")
+    expect(hrefFor("kanban")).toBe("/kanban")
+    expect(adminPanelHref("users")).toBe("/admin/users")
+    expect(loginHref()).toBe("/login")
+    expect(loginHref("/")).toBe("/login")
+    expect(loginHref("/admin/users")).toBe("/login?next=%2Fadmin%2Fusers")
+  })
+
+  it("seeds AtomHttpApi SSR islands inside isolated RegistryProviders, supports deferred hydration triggers, and preserves body markup in transformShell", async () => {
+    const helloAtom = ApiClient.query("system", "hello", {})
+    const utcTime = new Intl.DateTimeFormat("en", { timeStyle: "medium", timeZone: "UTC" })
+    const SeededHello = ({ message }: { readonly message: string }) => {
+      useAtomInitialValues([
+        seedAtom(helloAtom, { message, time: new Date("2026-01-01T13:45:30Z") }),
+      ])
+      const result = useAtomValue(helloAtom)
+      return createElement(
+        "span",
+        null,
+        AsyncResult.match(result, {
+          onInitial: () => "Loading…",
+          onFailure: () => "Error",
+          onSuccess: ({ value }) => `${value.message} (${utcTime.format(value.time)} UTC)`,
+        }),
+      )
+    }
+
+    const firstRender = renderToString(
+      createElement(
+        RegistryProvider,
+        null,
+        createElement(SeededHello, { message: "First SSR request" }),
+      ),
+    )
+    const secondRender = renderToString(
+      createElement(
+        RegistryProvider,
+        null,
+        createElement(SeededHello, { message: "Second SSR request" }),
+      ),
+    )
+    expect(firstRender).toContain("First SSR request (1:45:30 PM UTC)")
+    expect(secondRender).toContain("Second SSR request (1:45:30 PM UTC)")
+
+    const idleIsland = defineIsland("idle-demo", () => createElement("span", null, "Idle"), {
+      hydrate: "idle",
+    })
+    expect(idleIsland.hydrate).toBe("idle")
+
+    const sampleHtml =
+      '<!DOCTYPE html><html><head><script>const s="<body>";</script></head><body><div data-props="{&quot;raw&quot;:&quot;%ENV% and </body>&quot;}">Hello</div></body></html>'
+    const transformed = await transformShell(
+      {
+        transformIndexHtml: async (_url, shell) =>
+          shell.replace("</head>", '<script type="module" src="/@vite/client"></script></head>'),
+      },
+      "/about",
+      sampleHtml,
+    )
+    expect(transformed).toContain('<script type="module" src="/@vite/client"></script></head>')
+    expect(transformed).toContain(
+      '<div data-props="{&quot;raw&quot;:&quot;%ENV% and </body>&quot;}">Hello</div>',
+    )
   })
 })

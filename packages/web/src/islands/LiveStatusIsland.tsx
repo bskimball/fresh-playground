@@ -1,22 +1,32 @@
 import { Button } from "@astryxdesign/core/Button"
-import { useAtomRefresh, useAtomValue } from "@effect/atom-react"
+import { useAtomInitialValues, useAtomRefresh, useAtomValue } from "@effect/atom-react"
+import { Garden, Hello } from "@playground/contract"
 import * as stylex from "@stylexjs/stylex"
+import { Schema } from "effect"
 import { AsyncResult } from "effect/reactivity"
 import { useEffect } from "react"
-import { ApiClient } from "../client/ApiClient.ts"
+import { ApiClient, seedAtom } from "../client/ApiClient.ts"
 import { defineIsland } from "../client/hydrateIsland.ts"
 import { Icon } from "../components/Icon.tsx"
 import { watchFreshness } from "../features/terrarium/freshness.ts"
+import { schemaJsonCodec } from "../machines/offlineSync.ts"
 import { text } from "../styles/text.ts"
 import { colors, media } from "../styles/tokens.stylex.ts"
 
 const helloAtom = ApiClient.query("system", "hello", {})
 const gardenAtom = ApiClient.query("garden", "get", {})
 
-const timeFormat = new Intl.DateTimeFormat("en", { timeStyle: "medium" })
+export const LiveStatusSnapshot = Schema.Struct({
+  hello: Hello,
+  garden: Garden,
+})
+export type LiveStatusSnapshot = typeof LiveStatusSnapshot.Type
 
-/** Hydrated when visible. Reads the API through atoms, no hand-written fetch. */
-export default function LiveStatusIsland() {
+const timeFormat = new Intl.DateTimeFormat("en", { timeStyle: "medium", timeZone: "UTC" })
+
+/** Hydrated when visible. Seeds SSR snapshot into atoms, then refreshes via AtomHttpApi. */
+export default function LiveStatusIsland(initial: LiveStatusSnapshot) {
+  useAtomInitialValues([seedAtom(helloAtom, initial.hello), seedAtom(gardenAtom, initial.garden)])
   const hello = useAtomValue(helloAtom)
   const garden = useAtomValue(gardenAtom)
   const refreshHello = useAtomRefresh(helloAtom)
@@ -29,8 +39,7 @@ export default function LiveStatusIsland() {
       }),
     [refreshHello, refreshGarden],
   )
-  const isServer = typeof window === "undefined"
-  const waiting = isServer || hello.waiting || garden.waiting
+  const waiting = hello.waiting || garden.waiting
 
   return (
     <div {...stylex.props(styles.console)}>
@@ -57,13 +66,11 @@ export default function LiveStatusIsland() {
             <span>GET /api/hello</span>
           </dt>
           <dd {...stylex.props(styles.value, text.tabular)} aria-live="polite">
-            {isServer
-              ? "Loading…"
-              : AsyncResult.match(hello, {
-                  onInitial: () => "Loading…",
-                  onFailure: () => "The server didn’t answer.",
-                  onSuccess: ({ value }) => `${value.message} (${timeFormat.format(value.time)})`,
-                })}
+            {AsyncResult.match(hello, {
+              onInitial: () => "Loading…",
+              onFailure: () => "The server didn’t answer.",
+              onSuccess: ({ value }) => `${value.message} (${timeFormat.format(value.time)} UTC)`,
+            })}
           </dd>
         </div>
         <div {...stylex.props(styles.endpointCard)}>
@@ -72,16 +79,14 @@ export default function LiveStatusIsland() {
             <span>GET /api/garden</span>
           </dt>
           <dd {...stylex.props(styles.value, text.tabular)} aria-live="polite">
-            {isServer
-              ? "Loading…"
-              : AsyncResult.match(garden, {
-                  onInitial: () => "Loading…",
-                  onFailure: () => "The garden is unreachable.",
-                  onSuccess: ({ value }) =>
-                    `Moisture ${value.moisture}% · sunlight ${value.sunlight}% · ${
-                      value.night ? "night" : "day"
-                    } · watered ${value.waters} times`,
-                })}
+            {AsyncResult.match(garden, {
+              onInitial: () => "Loading…",
+              onFailure: () => "The garden is unreachable.",
+              onSuccess: ({ value }) =>
+                `Moisture ${value.moisture}% · sunlight ${value.sunlight}% · ${
+                  value.night ? "night" : "day"
+                } · watered ${value.waters} times`,
+            })}
           </dd>
         </div>
       </dl>
@@ -91,6 +96,7 @@ export default function LiveStatusIsland() {
 
 export const liveStatusIsland = defineIsland("live-status", LiveStatusIsland, {
   hydrate: "visible",
+  codec: schemaJsonCodec(LiveStatusSnapshot),
 })
 
 const styles = stylex.create({

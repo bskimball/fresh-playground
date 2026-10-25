@@ -2,7 +2,7 @@ import { AppApi } from "@playground/contract"
 import { Effect, Layer, ManagedRuntime, Schedule } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { HttpApiClient } from "effect/http-api"
-import { AtomHttpApi } from "effect/reactivity"
+import { AsyncResult, type Atom, AtomHttpApi } from "effect/reactivity"
 import { acknowledgeRealtimeRead, realtimeReadPolicy, realtimeTopicForPath } from "./Realtime.ts"
 
 // Islands also render once on the server, where no request is made, so the
@@ -15,6 +15,7 @@ const transformClient = (client: HttpClient.HttpClient) => {
   )
   return client.pipe(
     HttpClient.transform((response, request) => {
+      if (typeof window === "undefined") return Effect.never
       if (request.method !== "GET" && request.method !== "HEAD") return response
       const topic = realtimeTopicForPath(
         new URL(request.url, baseUrl ?? "http://localhost").pathname,
@@ -38,6 +39,19 @@ const transformClient = (client: HttpClient.HttpClient) => {
     }),
   )
 }
+
+/**
+ * Pairs an `AsyncResult` atom with a server-rendered initial value for
+ * `useAtomInitialValues([seedAtom(atom, value)])` so SSR and client hydration
+ * render immediately without a redundant initial fetch.
+ */
+export const seedAtom = <A, E>(
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  value: A,
+): readonly [Atom.Atom<AsyncResult.AsyncResult<A, E>>, AsyncResult.AsyncResult<A, E>] => [
+  atom,
+  AsyncResult.success(value),
+]
 
 /**
  * Typed client for `AppApi`. Use it as an Effect service, or through

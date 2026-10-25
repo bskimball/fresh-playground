@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect"
 import { HttpRouter, type HttpServerRequest, HttpServerResponse } from "effect/http"
+import { adminPanelHref, hrefFor, loginHref } from "../../components/sections.ts"
 import { Island } from "../../server/Document.tsx"
 import { Page } from "../../server/Page.ts"
 import { AdminLayout } from "./AdminLayout.tsx"
@@ -17,8 +18,8 @@ export const AdminPages = HttpRouter.use(
       Effect.gen(function* () {
         const viewer = yield* page.viewer(request)
         if (Option.isNone(viewer)) {
-          const path = request.url.split("?", 1)[0] ?? "/admin"
-          return HttpServerResponse.redirect(`/login?next=${encodeURIComponent(path)}`)
+          const path = request.url.split("?", 1)[0] ?? hrefFor("admin")
+          return HttpServerResponse.redirect(loginHref(path))
         }
         const { user } = viewer.value
         const panels = panelsFor(user.role)
@@ -32,9 +33,10 @@ export const AdminPages = HttpRouter.use(
             children: <p>Your account doesn’t have access to this page.</p>,
           })
         }
-        if (panel === undefined) return HttpServerResponse.redirect(`/admin/${first.id}`)
+        if (panel === undefined) return HttpServerResponse.redirect(adminPanelHref(first.id))
         return yield* page.render(request, {
           title: `${panel.label} · Admin`,
+          description: panel.description,
           current: "admin",
           viewer,
           children: (
@@ -45,9 +47,9 @@ export const AdminPages = HttpRouter.use(
         })
       })
 
-    yield* router.add("GET", "/admin", (request) => adminPage(request))
+    yield* router.add("GET", hrefFor("admin"), (request) => adminPage(request))
     for (const panel of adminPanels) {
-      yield* router.add("GET", `/admin/${panel.id}`, (request) => adminPage(request, panel))
+      yield* router.add("GET", adminPanelHref(panel.id), (request) => adminPage(request, panel))
     }
   }),
 )

@@ -12,22 +12,56 @@ import {
 import type { RegisteredIsland } from "./hydrateIsland.ts"
 import { type IslandName, islandRegistry } from "./islandRegistry.ts"
 
+const failIslandLoad = (root: HTMLElement, error: unknown) => {
+  const name = root.dataset.island ?? "unknown"
+  console.error(`Island "${name}" failed to load`, error)
+  root.inert = true
+  root.removeAttribute("aria-busy")
+  const status = document.querySelector<HTMLElement>(`[data-island-status="${name}"]`)
+  const statusText = "Interactive controls could not load. Reload the page to try again."
+  const detail = error instanceof Error ? error.message : String(error)
+  if (status) {
+    status.hidden = false
+    status.textContent = import.meta.env.DEV
+      ? `${statusText} (Island "${name}" failed to load: ${detail})`
+      : statusText
+  }
+}
+
 const mountIsland = (root: HTMLElement, load: () => Promise<RegisteredIsland>) => {
   void load()
     .then((island) => {
       island.boot(root)
     })
     .catch((error: unknown) => {
-      const name = root.dataset.island ?? "unknown"
-      console.error(`Island "${name}" failed to load`, error)
-      root.inert = true
-      root.removeAttribute("aria-busy")
-      const status = document.querySelector<HTMLElement>(`[data-island-status="${name}"]`)
-      if (status) {
-        status.hidden = false
-        status.textContent = "Interactive controls could not load. Reload the page to try again."
-      }
+      failIslandLoad(root, error)
     })
+}
+
+const scheduleIdle = (task: () => void) => {
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(task, { timeout: 2000 })
+  } else {
+    setTimeout(task, 0)
+  }
+}
+
+const bootIslandRoot = (root: HTMLElement, load: () => Promise<RegisteredIsland>) => {
+  const trigger = root.dataset.hydrate
+  if (trigger === "visible" && typeof IntersectionObserver !== "undefined") {
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((item) => item.isIntersecting)) return
+      observer.disconnect()
+      mountIsland(root, load)
+    })
+    observer.observe(root)
+    return
+  }
+  if (trigger === "idle") {
+    scheduleIdle(() => mountIsland(root, load))
+    return
+  }
+  mountIsland(root, load)
 }
 
 const bootIslands = () => {
@@ -35,16 +69,7 @@ const bootIslands = () => {
     const name = root.dataset.island
     if (!name || !Object.hasOwn(islandRegistry, name)) continue
     const { load } = islandRegistry[name as IslandName]
-    if (root.dataset.hydrate === "visible" && typeof IntersectionObserver !== "undefined") {
-      const observer = new IntersectionObserver((entries) => {
-        if (!entries.some((item) => item.isIntersecting)) return
-        observer.disconnect()
-        mountIsland(root, load)
-      })
-      observer.observe(root)
-    } else {
-      mountIsland(root, load)
-    }
+    bootIslandRoot(root, load)
   }
 }
 

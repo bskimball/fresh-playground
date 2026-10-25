@@ -7,7 +7,7 @@ import type { Section } from "../components/sections.ts"
 import type { Viewer } from "../components/Shell.tsx"
 import { themeFromCookie } from "../components/themePreference.ts"
 import { panelsFor } from "../features/admin/panels.ts"
-import { renderDocument } from "./Document.tsx"
+import { type OpenGraphMeta, renderDocument } from "./Document.tsx"
 
 /** Built client files, from the Vite manifest. */
 export interface Assets {
@@ -21,10 +21,14 @@ export interface Assets {
 
 export interface PageOptions {
   readonly title: string
+  readonly description?: string | undefined
+  readonly canonical?: string | undefined
+  readonly openGraph?: OpenGraphMeta | undefined
   readonly current: Section
   /** Omit to look up the signed-in viewer; pass it when the route already did. */
   readonly viewer?: Option.Option<Viewer>
   readonly status?: number
+  readonly headers?: Readonly<Record<string, string>> | undefined
   readonly children: ReactNode
 }
 
@@ -55,7 +59,7 @@ export class Page extends Context.Service<
 
         const render = (request: Request, options: PageOptions) =>
           Effect.gen(function* () {
-            const { viewer: known, status = 200, ...document } = options
+            const { viewer: known, status = 200, headers, ...document } = options
             const signedIn = known ?? (yield* viewer(request))
             const html = renderDocument({
               theme: themeFromCookie(request.headers.cookie ?? ""),
@@ -67,13 +71,14 @@ export class Page extends Context.Service<
               ...document,
             })
             const transform = assets.transformHtml
-            return HttpServerResponse.html(
+            const baseResponse = HttpServerResponse.html(
               transform ? yield* Effect.promise(() => transform(request.url, html)) : html,
             ).pipe(
               HttpServerResponse.setStatus(status),
               // The header shows who is signed in, so shared caches must not store pages.
               HttpServerResponse.setHeader("cache-control", "private, no-cache"),
             )
+            return headers ? HttpServerResponse.setHeaders(baseResponse, headers) : baseResponse
           })
 
         return Page.of({ viewer, render })

@@ -25,6 +25,18 @@ export const sections = {
 
 export type Section = keyof typeof sections
 
+export type SectionHref<S extends Section = Section> = (typeof sections)[S]["href"]
+
+/** Type-safe route href lookup for registered sections. */
+export const hrefFor = <S extends Section>(section: S): SectionHref<S> => sections[section].href
+
+/** Type-safe route builder for admin panel sub-routes. */
+export const adminPanelHref = <Id extends string>(id: Id): `/admin/${Id}` => `/admin/${id}`
+
+/** Type-safe route builder for sign-in redirects. */
+export const loginHref = (next?: string): `/login${string}` =>
+  next && next !== "/" ? `/login?next=${encodeURIComponent(next)}` : "/login"
+
 export interface SectionLink extends SectionInfo {
   readonly section: Section
 }

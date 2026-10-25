@@ -4,7 +4,7 @@ import type { ReactNode } from "react"
 import { text } from "../styles/text.ts"
 import { colors, fonts, media } from "../styles/tokens.stylex.ts"
 import { Icon } from "./Icon.tsx"
-import { navLinks, publicLinks, type Section } from "./sections.ts"
+import { hrefFor, navLinks, publicLinks, type Section } from "./sections.ts"
 import { ThemeToggle } from "./ThemeToggle.tsx"
 
 /** Who is signed in, and whether they may open `/admin`. */
@@ -28,7 +28,11 @@ export function Shell({
     <>
       <header {...stylex.props(styles.header)}>
         <div {...stylex.props(styles.headerInner)}>
-          <a {...stylex.props(styles.brand)} href="/" aria-label="Little world home">
+          <a
+            {...stylex.props(styles.brand)}
+            href={hrefFor("garden")}
+            aria-label="Little world home"
+          >
             <span {...stylex.props(styles.brandEmblem)}>
               <Icon name="leaf" size={20} />
             </span>
@@ -58,7 +62,11 @@ export function Shell({
                       {...stylex.props(styles.navActivePill)}
                     />
                   )}
-                  <span data-nav-item={link.section} {...stylex.props(styles.navItemContent)}>
+                  <span
+                    data-nav-item={link.section}
+                    style={{ viewTransitionName: `nav-item-${link.section}` }}
+                    {...stylex.props(styles.navItemContent)}
+                  >
                     <span {...stylex.props(styles.navIcon, isCurrent && styles.navIconCurrent)}>
                       <Icon name={link.icon} size={15} />
                     </span>
@@ -86,7 +94,7 @@ export function Shell({
               </form>
             ) : (
               <a
-                href="/login"
+                href={hrefFor("login")}
                 aria-current={current === "login" ? "page" : undefined}
                 {...stylex.props(
                   styles.signInLink,
@@ -122,6 +130,29 @@ export function Shell({
         </footer>
       </main>
     </>
+  )
+}
+
+/** Rendered inside `Shell` for unmatched GET navigation paths. */
+export function NotFound() {
+  return (
+    <section aria-labelledby="not-found-heading" {...stylex.props(styles.notFoundCard)}>
+      <span {...stylex.props(styles.notFoundKicker)}>404 · OUTSIDE THE CONSERVATORY</span>
+      <h1 id="not-found-heading" {...stylex.props(styles.notFoundHeading)}>
+        This path leads beyond the glasshouse.
+      </h1>
+      <p {...stylex.props(styles.notFoundBody)}>
+        The page you requested doesn’t exist here. You can return to the{" "}
+        <a href={hrefFor("garden")} {...stylex.props(styles.notFoundLink)}>
+          garden
+        </a>{" "}
+        or browse the{" "}
+        <a href={hrefFor("journal")} {...stylex.props(styles.notFoundLink)}>
+          journal
+        </a>
+        .
+      </p>
+    </section>
   )
 }
 
@@ -415,5 +446,43 @@ const styles = stylex.create({
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: colors.borderSubtle,
+  },
+  notFoundCard: {
+    display: "grid",
+    gap: 12,
+    maxWidth: 640,
+    padding: { default: 32, [media.mobile]: 22 },
+    borderRadius: 20,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: colors.borderSubtle,
+    boxShadow: colors.shadowSm,
+  },
+  notFoundKicker: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: 1.6,
+    color: colors.mossDark,
+  },
+  notFoundHeading: {
+    margin: 0,
+    fontFamily: fonts.serif,
+    fontSize: { default: 30, [media.mobile]: 24 },
+    fontWeight: 600,
+    lineHeight: 1.15,
+    color: colors.ink,
+  },
+  notFoundBody: {
+    margin: 0,
+    fontSize: 15,
+    lineHeight: 1.6,
+    color: colors.muted,
+  },
+  notFoundLink: {
+    color: colors.ink,
+    fontWeight: 600,
+    textDecoration: "underline",
+    textUnderlineOffset: "3px",
   },
 })

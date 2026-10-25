@@ -74,7 +74,8 @@ export class Garden extends Context.Service<
     Effect.gen(function* () {
       const database = yield* Sqlite
       const events = yield* Events
-      database.exec(`
+      Sqlite.migrate(database, "garden", [
+        `
         CREATE TABLE IF NOT EXISTS garden_state (
           id INTEGER PRIMARY KEY CHECK (id = 1),
           moisture INTEGER NOT NULL,
@@ -84,7 +85,8 @@ export class Garden extends Context.Service<
           waters INTEGER NOT NULL,
           journal_json TEXT NOT NULL
         )
-      `)
+        `,
+      ])
 
       const selectRow = database.prepare(
         `SELECT moisture, watered_at, sunlight, night, waters, journal_json FROM garden_state WHERE id = 1`,

@@ -4,7 +4,19 @@ import { finished } from "node:stream"
 import { fileURLToPath } from "node:url"
 import { Effect } from "effect"
 import { isRunnableDevEnvironment, type Plugin, type ViteDevServer } from "vite-plus"
+import { islandRegistry } from "../client/islandRegistry.ts"
 import { serverConfig } from "./runtime.ts"
+
+const validateIslandSources = () => {
+  for (const [name, entry] of Object.entries(islandRegistry)) {
+    const resolved = fileURLToPath(new URL(`../../${entry.source}`, import.meta.url))
+    if (!existsSync(resolved)) {
+      throw new Error(
+        `Island "${name}": source "${entry.source}" does not exist at ${resolved}. Check packages/web/src/client/islandRegistry.ts.`,
+      )
+    }
+  }
+}
 
 type DevEntry = typeof import("./dev.ts")
 type DevApp = Awaited<ReturnType<DevEntry["start"]>>
@@ -87,6 +99,7 @@ export function effectDevServer(): Plugin {
     },
 
     configureServer(server) {
+      validateIslandSources()
       vite = server
       const ssr = server.environments.ssr
       if (!ssr || !isRunnableDevEnvironment(ssr)) {

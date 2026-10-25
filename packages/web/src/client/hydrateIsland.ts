@@ -2,7 +2,7 @@ import { type ComponentType, createElement, type ReactNode, useEffect } from "re
 import { hydrateRoot } from "react-dom/client"
 import { AppTheme } from "../components/AppTheme.tsx"
 
-export type HydrationTrigger = "load" | "visible"
+export type HydrationTrigger = "load" | "visible" | "idle"
 
 export interface IslandCodec<P> {
   readonly encode: (props: P) => unknown
@@ -40,9 +40,19 @@ export function failIsland(
   root.removeAttribute("aria-busy")
   const name = root.dataset.island
   const status = name ? document.querySelector<HTMLElement>(`[data-island-status="${name}"]`) : null
+  const detail = error instanceof Error ? error.message : String(error)
   if (status) {
     status.hidden = false
-    status.textContent = statusText
+    status.textContent = import.meta.env.DEV
+      ? `${statusText} (${logMessage}: ${detail})`
+      : statusText
+  }
+  if (import.meta.env.DEV && typeof document !== "undefined") {
+    const Overlay = globalThis.customElements?.get("vite-error-overlay")
+    if (Overlay && !document.querySelector("vite-error-overlay")) {
+      const normalized = error instanceof Error ? error : new Error(`${logMessage}: ${detail}`)
+      document.body.appendChild(new Overlay(normalized))
+    }
   }
 }
 
@@ -112,6 +122,14 @@ export function hydrateIsland(root: HTMLElement, children: ReactNode) {
   hydrateRoot(root, createElement(Ready), {
     onUncaughtError(error) {
       failIsland(root, "Island hydration failed", error)
+    },
+    onRecoverableError(error) {
+      if (import.meta.env.DEV) {
+        console.error(
+          `Island "${root.dataset.island ?? "unknown"}" recoverable hydration error`,
+          error,
+        )
+      }
     },
   })
 }

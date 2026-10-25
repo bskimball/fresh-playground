@@ -2,7 +2,14 @@ import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 
 export const EVENTS_PATH = "/api/events"
-export const EventTopic = Schema.Literals(["garden", "kanban"])
+export const EVENT_TOPIC_PATHS = {
+  garden: "/api/garden",
+  kanban: "/api/kanban",
+} as const
+export const EVENT_TOPICS = ["garden", "kanban"] as const satisfies ReadonlyArray<
+  keyof typeof EVENT_TOPIC_PATHS
+>
+export const EventTopic = Schema.Literals(EVENT_TOPICS)
 export type EventTopic = typeof EventTopic.Type
 export const InvalidationPayload = Schema.Struct({ topic: EventTopic })
 export const ResyncPayload = Schema.Struct({ topics: Schema.Array(EventTopic) })

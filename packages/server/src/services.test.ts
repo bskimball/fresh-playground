@@ -752,3 +752,72 @@ it("composes auth, events and the mail worker once over the same configured file
     temp.close()
   }
 })
+
+describe("Sqlite.migrate and Events topic constraint migration", () => {
+  it("applies versioned migrations per namespace and rolls back failed steps in a savepoint", () => {
+    const db = new DatabaseSync(":memory:")
+    try {
+      expect(
+        Sqlite.migrate(db, "specimen", [
+          "CREATE TABLE specimen (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+          (database) => {
+            database.exec("ALTER TABLE specimen ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+          },
+        ]),
+      ).toBe(2)
+
+      // Re-running with the same migrations is a no-op
+      expect(
+        Sqlite.migrate(db, "specimen", [
+          "CREATE TABLE specimen (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+          "ALTER TABLE specimen ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+        ]),
+      ).toBe(2)
+
+      // A failing step rolls back its DDL/DML and leaves the recorded version at 2
+      expect(() =>
+        Sqlite.migrate(db, "specimen", [
+          "CREATE TABLE specimen (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+          "ALTER TABLE specimen ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+          (database) => {
+            database
+              .prepare("INSERT INTO specimen (id, label, notes) VALUES (1, 'fern', 'ok')")
+              .run()
+            throw new Error("migration step 3 failed")
+          },
+        ]),
+      ).toThrow("migration step 3 failed")
+
+      expect(
+        db.prepare("SELECT version FROM schema_migrations WHERE namespace = 'specimen'").get(),
+      ).toEqual({ version: 2 })
+      expect(db.prepare("SELECT count(*) AS n FROM specimen").get()).toEqual({ n: 0 })
+    } finally {
+      db.close()
+    }
+  })
+
+  it("upgrades an older public_events topic CHECK constraint while preserving sequence history", async () => {
+    const db = new DatabaseSync(":memory:")
+    try {
+      db.exec(`
+        CREATE TABLE event_generation (id INTEGER PRIMARY KEY CHECK (id = 1), generation TEXT NOT NULL);
+        INSERT INTO event_generation VALUES (1, 'gen-legacy');
+        CREATE TABLE public_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL CHECK(topic IN ('garden')));
+        INSERT INTO public_events (topic) VALUES ('garden');
+      `)
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const events = yield* Events
+          events.commit("kanban", () => undefined)
+          const replayed = events.replay("gen-legacy:0")
+          expect(
+            replayed.map((event) => (event.event === "invalidate" ? event.data.topic : "resync")),
+          ).toEqual(["garden", "kanban"])
+        }).pipe(Effect.provide(Events.layer), Effect.provide(Layer.succeed(Sqlite, db))),
+      )
+    } finally {
+      db.close()
+    }
+  })
+})

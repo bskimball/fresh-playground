@@ -17,6 +17,29 @@ export const safeNext = (value: string | null) => {
   return `${url.pathname}${url.search}${url.hash}`
 }
 
+/**
+ * Vite's HTML transform adds its client, React Refresh, and StyleX to the head, but
+ * it also rewrites `%NAME%` placeholders wherever it looks. Only the document shell
+ * goes through it; the rendered body, with page content and island props, is put
+ * back afterward. Anchoring on `</head><body>` and `</body></html>` avoids matching
+ * any substring inside head scripts, meta tags, or serialized island props.
+ */
+export const transformShell = async (
+  vite: { readonly transformIndexHtml: (url: string, html: string) => Promise<string> },
+  url: string,
+  html: string,
+) => {
+  const openTag = "</head><body>"
+  const closeTag = "</body></html>"
+  const openIndex = html.indexOf(openTag)
+  if (openIndex === -1 || !html.endsWith(closeTag)) return vite.transformIndexHtml(url, html)
+  const start = openIndex + openTag.length
+  const end = html.length - closeTag.length
+  const shell = await vite.transformIndexHtml(url, html.slice(0, start) + html.slice(end))
+  const at = shell.lastIndexOf("</body>")
+  return at === -1 ? shell : shell.slice(0, at) + html.slice(start, end) + shell.slice(at)
+}
+
 export const serverConfig = Config.all({
   environment: Config.Literals(["development", "test", "production"], "NODE_ENV").pipe(
     Config.withDefault("development"),

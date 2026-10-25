@@ -70,13 +70,15 @@ export class Kanban extends Context.Service<
     Effect.gen(function* () {
       const database = yield* Sqlite
       const events = yield* Events
-      database.exec(`
+      Sqlite.migrate(database, "kanban", [
+        `
         CREATE TABLE IF NOT EXISTS kanban_state (
           id INTEGER PRIMARY KEY CHECK (id = 1),
           cards_json TEXT NOT NULL,
           updated_at INTEGER NOT NULL
         )
-      `)
+        `,
+      ])
 
       const selectRow = database.prepare(
         `SELECT cards_json, updated_at FROM kanban_state WHERE id = 1`,

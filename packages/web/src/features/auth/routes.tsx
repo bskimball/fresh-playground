@@ -1,6 +1,7 @@
 import { Auth, webHeaders } from "@playground/server"
 import { Effect, Option } from "effect"
 import { HttpRouter, HttpServerResponse } from "effect/http"
+import { hrefFor } from "../../components/sections.ts"
 import { Island } from "../../server/Document.tsx"
 import { Page } from "../../server/Page.ts"
 import { safeNext } from "../../server/runtime.ts"
@@ -11,7 +12,7 @@ export const AuthPages = HttpRouter.use(
     const page = yield* Page
     const auth = yield* Auth
 
-    yield* router.add("GET", "/login", (request) =>
+    yield* router.add("GET", hrefFor("login"), (request) =>
       Effect.gen(function* () {
         const query = new URL(request.url, "http://localhost").searchParams
         const next = safeNext(query.get("next"))
@@ -24,6 +25,7 @@ export const AuthPages = HttpRouter.use(
         }
         return yield* page.render(request, {
           title: "Sign in",
+          description: "Sign in to manage the Little world conservatory.",
           current: "login",
           viewer,
           children: <Island island={loginIsland} props={props} />,
@@ -38,7 +40,7 @@ export const AuthPages = HttpRouter.use(
         const response = yield* Effect.promise(() =>
           auth.api.signOut({ headers: webHeaders(request), asResponse: true }),
         )
-        return HttpServerResponse.redirect("/", { status: 303 }).pipe(
+        return HttpServerResponse.redirect(hrefFor("garden"), { status: 303 }).pipe(
           HttpServerResponse.mergeCookies(HttpServerResponse.fromWeb(response).cookies),
           HttpServerResponse.setHeader("clear-site-data", '"cache", "prefetchCache"'),
         )

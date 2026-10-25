@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto"
-import { AppApi, type EventTopic, type PublicEvent } from "@playground/contract"
+import { AppApi, EVENT_TOPICS, type EventTopic, type PublicEvent } from "@playground/contract"
 import { Context, Effect, Layer, Stream } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/http-api"
 import { Sqlite } from "./Sqlite.ts"
 
 const RETENTION = 1000
 const BATCH_SIZE = 100
+const topicListSql = EVENT_TOPICS.map((topic) => `'${topic}'`).join(", ")
+const publicEventsTableSql = `CREATE TABLE IF NOT EXISTS public_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL CHECK(topic IN (${topicListSql})))`
 
 /** Public invalidations only. The synchronous savepoint never spans an Effect yield. */
 export class Events extends Context.Service<
@@ -21,10 +23,34 @@ export class Events extends Context.Service<
     Events,
     Effect.gen(function* () {
       const db = yield* Sqlite
-      db.exec(`
-      CREATE TABLE IF NOT EXISTS event_generation (id INTEGER PRIMARY KEY CHECK (id = 1), generation TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS public_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL CHECK(topic IN ('garden', 'kanban')));
-    `)
+      Sqlite.migrate(db, "events", [
+        `
+        CREATE TABLE IF NOT EXISTS event_generation (id INTEGER PRIMARY KEY CHECK (id = 1), generation TEXT NOT NULL);
+        ${publicEventsTableSql};
+        `,
+      ])
+      // If EVENT_TOPICS expanded after the database was first created, widen the CHECK constraint in place.
+      const existingSql = (
+        db
+          .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'public_events'")
+          .get() as { readonly sql?: string } | undefined
+      )?.sql
+      if (existingSql !== undefined && !existingSql.includes(`(${topicListSql})`)) {
+        db.exec("SAVEPOINT public_events_topic_sync")
+        try {
+          db.exec(`
+            ALTER TABLE public_events RENAME TO public_events_old;
+            ${publicEventsTableSql};
+            INSERT INTO public_events (sequence, topic)
+              SELECT sequence, topic FROM public_events_old WHERE topic IN (${topicListSql});
+            DROP TABLE public_events_old;
+          `)
+          db.exec("RELEASE public_events_topic_sync")
+        } catch (error) {
+          db.exec("ROLLBACK TO public_events_topic_sync; RELEASE public_events_topic_sync")
+          throw error
+        }
+      }
       db.prepare("INSERT OR IGNORE INTO event_generation VALUES (1, ?)").run(randomUUID())
       const generation = (
         db.prepare("SELECT generation FROM event_generation WHERE id = 1").get() as {
@@ -54,7 +80,7 @@ export class Events extends Context.Service<
           ).oldest ?? current + 1,
         )
         if (!Number.isSafeInteger(sequence) || sequence > current || sequence < oldest - 1) {
-          return [{ id: id(current), event: "resync", data: { topics: ["garden", "kanban"] } }]
+          return [{ id: id(current), event: "resync", data: { topics: EVENT_TOPICS } }]
         }
         return (
           db

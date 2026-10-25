@@ -1,4 +1,6 @@
 import {
+  EVENT_TOPIC_PATHS,
+  EVENT_TOPICS,
   EVENTS_PATH,
   type EventTopic,
   InvalidationPayload,
@@ -22,14 +24,18 @@ export const decodeRealtimeTopics = (event: string, data: unknown): ReadonlyArra
   return []
 }
 
-export const realtimeTopicForPath = (pathname: string): EventTopic | undefined => {
-  if (pathname === "/api/garden") return "garden"
-  if (pathname === "/api/kanban") return "kanban"
-  return undefined
-}
+const topicByPath = new Map<string, EventTopic>(
+  EVENT_TOPICS.map((topic) => [EVENT_TOPIC_PATHS[topic], topic]),
+)
+
+export const realtimeTopicForPath = (pathname: string): EventTopic | undefined =>
+  topicByPath.get(pathname)
 
 const listeners = new Map<EventTopic, Set<() => void>>()
-const revisions: Record<EventTopic, number> = { garden: 0, kanban: 0 }
+const revisions = Object.fromEntries(EVENT_TOPICS.map((topic) => [topic, 0])) as Record<
+  EventTopic,
+  number
+>
 const dirty = new Set<EventTopic>()
 let source: EventSource | undefined
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined
