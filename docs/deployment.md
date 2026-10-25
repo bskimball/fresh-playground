@@ -11,7 +11,7 @@ The host needs Node.js 24.21.0, installed dependencies, and the build output. Ke
 ## Provision and start
 
 1. Complete the [publication prerequisites](releases.md#publication-prerequisites) if distributing publicly. Run `npm ci` for a frozen install, run checks/tests, and build from the repository root using the [verification commands](development.md#verification).
-2. Provision a persistent directory writable by the app's OS user. Set `DATABASE_PATH` to an **absolute path** outside replaceable build directories. It holds authentication and both demo stores; protect access to it and backups.
+2. Provision a persistent directory writable by the app's OS user. Set `DATABASE_PATH` to an **absolute path** outside replaceable build directories. It holds authentication, demo stores, event generation/replay, and durable queues; protect it and its backups. Full `AppServices` requires a file-backed path (not `:memory:`). Raw domain/auth/events and native jobs open two scoped connections to this same file, not two databases. Standalone `Sqlite.memory` remains available outside full app composition.
 3. Configure production environment values. The following are required choices, not a ready-to-use secret file:
 
    | Setting              | Production choice                                                                                                                         |
@@ -53,6 +53,12 @@ curl --fail --silent --show-error https://app.example.com/health/ready
 
 These checks do not establish successful login, mail delivery, or restart persistence; complete step 7 separately.
 
+## SSE through the HTTP proxy
+
+`GET /api/events` is a public invalidation stream, not a private/full-state feed. Disable proxy buffering, response caching, and compression/transformation for this path. The app sends `Cache-Control: no-store, no-transform`, `Content-Encoding: identity`, and `X-Accel-Buffering: no`; ensure your proxy/CDN actually honors the streaming policy. Permit a response lifetime longer than 120 seconds and an idle read timeout comfortably above the approximately 15-second heartbeat interval. The server intentionally retires connections after 120 seconds; native EventSource reconnect is expected, not a reason to restart the app.
+
+Test through the actual HTTPS proxy with `curl -N https://app.example.com/api/events` (replace the origin); expect an initial `resync` and continuing heartbeats without buffered bursts. `Last-Event-ID` enables replay within 1,000 retained events; invalid/expired/foreign cursors resync public topics. Reconnect after downtime refetches current state. SSE does not change the single-process limit, offline-write ambiguity, or last-write-wins conflicts.
+
 ## Email and SMTP
 
 `packages/server/src/Mailer.ts` implements `MAIL_TRANSPORT=log|smtp|disabled`. Defaults are `log` in development/test and `disabled` in production. Production explicitly rejects `log`. Outside production the log transport includes sign-in links, so restrict log access. `AUTH_MAGIC_LINK` defaults off in production; `true` with disabled transport fails startup.
@@ -75,15 +81,30 @@ Replace the example host/sender with those authorized by your provider, then sup
 
 For an isolated **local development relay only**, you can use `SMTP_HOST=127.0.0.1`, its listening port (often 1025), `SMTP_SECURE=false`, and `SMTP_REQUIRE_TLS=false`, with both credentials absent. This explicitly opts out of transport encryption; it is not the public SMTP configuration. Do not disable certificate verification to work around provider errors.
 
-The implementation uses Nodemailer without pooling. It sends through `sendMail`, treats recipient rejection as failure, and surfaces a generic `SMTP delivery failed` rather than leaking provider details. It performs no automatic retries or durable mail queuing. Startup configuration validation is not a provider connection/delivery test. SMTP acceptance is **not inbox delivery**. Before enabling production magic links, verify provider sender authorization, SPF/DKIM/DMARC requirements, TLS/authentication, an actual sign-in email and link, and failure behavior with a controlled recipient. No provider/DNS verification or real delivery is claimed by this repository.
+The implementation uses a per-attempt Nodemailer transport without pooling. Its public `getSocket` hook supplies an owned TCP socket; Effect finalization destroys the socket and waits for closure on completion, error, timeout, or shutdown interruption. Nodemailer retains implicit TLS/STARTTLS, certificate verification/SNI, authentication, and formatting. It sends through `sendMail`, treats recipient rejection as failure, and surfaces a generic `SMTP delivery failed` rather than leaking provider details. Closing a socket cannot retract DATA already accepted by the SMTP receiver; cancellation does not guarantee non-delivery. Auth mail is handed to the native durable `auth-mail` queue before the auth callback succeeds; success means **durably queued**, not SMTP acceptance. Token creation and enqueue are not atomic. A scoped worker makes at most five attempts, with exponential retry starting at two seconds, a 20-second send/attempt bound, and a 240-second deadline inside the 300-second magic-link TTL. The store refreshes locks every 10 seconds with 60-second lease expiry. Crashes/ambiguous SMTP outcomes can still duplicate a message; the stable Message-ID does not guarantee provider deduplication. Completed/failed auth payloads are scrubbed after attempts, on startup, and every second; expired unclaimed pending jobs are deleted. DB pages, WAL, and backups can contain pending addresses/tokens, and scrubbing is **not secure erasure**. Startup configuration validation is not a provider connection/delivery test. SMTP acceptance is **not inbox delivery**. Before enabling production magic links, verify provider sender authorization, SPF/DKIM/DMARC requirements, TLS/authentication, an actual sign-in email and link, and failure behavior with a controlled recipient. No provider/DNS verification or real delivery is claimed by this repository.
+
+## Durable job operations
+
+`Jobs` uses native Effect `PersistedQueue` through `@effect/sql-sqlite-node` 4.0.5, not Redis or an external broker. There is no queue admin UI or supported generic replay command. APIs and native table migrations are unstable; review upgrades against the lockfile and an isolated backup. Multiple app instances are still unsupported.
+
+With the SQLite CLI installed, these **read-only** queries inspect status without selecting `element` or `last_failure` (either may contain secrets for feature jobs). Replace the absolute path. Counts include delayed/leased pending work, not just immediately runnable work.
+
+```sh
+sqlite3 -readonly /absolute/path/to/app.db "SELECT queue_name, state, COUNT(*) AS jobs, MAX(attempts) AS max_attempts FROM durable_jobs GROUP BY queue_name, state ORDER BY queue_name, state;"
+sqlite3 -readonly /absolute/path/to/app.db "SELECT queue_name, id, attempts, created_at, updated_at FROM durable_jobs WHERE state = 'failed' ORDER BY updated_at DESC LIMIT 100;"
+```
+
+Keep operational output protected; do not use business secrets in job IDs. Completed rows normally retain dedupe IDs for one day, failed rows for seven days, with cleanup every minute. This is not permanent history. Restart allows pending work to resume and expired leases to be reclaimed; it is not a guaranteed resend or exactly-once recovery. Investigate configuration/provider failures before retrying business actions. Never blindly reset state/attempt counters, delete leases, or bulk re-offer unknown payloads: side effects may already have happened.
+
+Auth terminal payloads are scrubbed to `{}` and failed metadata is sanitized. **Do not replay failed auth rows; request a fresh magic link.** The old token may already be expired. Other features need their own reviewed recovery procedure, payload compatibility, deadline and deduplication policy. Readiness does not prove the worker or provider is healthy; monitor pending age/failure counts and test controlled delivery separately.
 
 ## Back up and restore SQLite safely
 
 The database uses WAL mode: copying only a live `app.db` can omit committed changes in `app.db-wal`. Use a stopped-process backup for this template:
 
-1. Block new traffic and stop the single app process cleanly; confirm no other process has the database open.
+1. Block new traffic and stop the single app process cleanly, including scoped mail/feature workers and SSE streams; confirm both SQLite connections and any inspection tools are closed. Do not copy while a worker can claim, acknowledge, or scrub jobs.
 2. Copy the database **and any existing matching `-wal` and `-shm` sidecars as one stopped snapshot** to a protected backup location. Clean shutdown may remove/checkpoint sidecars; do not assume that it did. Keep the matching app revision, lockfile, and required secret/configuration securely available for recovery. Avoid including unrelated secrets in an ordinary code archive.
-3. Restart and check readiness. Periodically rehearse restoration into an isolated location with disposable configuration; confirm accounts and application state. Choose backup frequency and retention based on acceptable data loss.
+3. Restart and check readiness plus queue metadata/worker behavior. Periodically rehearse restoration into an isolated location with disposable configuration; confirm accounts, application state, event generation/replay, and pending/completed/failed queues. Choose backup frequency and retention based on acceptable data loss.
 
 Example POSIX shell copy for step 2, **only after traffic is blocked and all database users are stopped**. Replace both placeholder paths; `backup` must be a new snapshot directory under a protected existing parent. Stopping/restarting is deliberately not scripted because it depends on your process supervisor.
 
@@ -102,11 +123,11 @@ done
 
 Do not use a partial snapshot if any copy fails. Keep the process stopped until the copy finishes; then restart it and run the health checks above. This copies only the database set, not the matching revision, lockfile, or protected recovery configuration required by step 2.
 
-To restore, stop the process and block traffic again. Preserve the current database set for investigation. Replace the database with the selected stopped snapshot and its matching sidecars; remove stale sidecars from the database being replaced, never mix sets. Restore ownership/permissions and launch the compatible application revision with the intended `DATABASE_PATH` and auth secret. Check health, login/admin access, and data before reopening traffic. Avoid accidental email sends during recovery drills. A restore loses writes after the snapshot; account for browser pending edits before reconnecting clients.
+To restore, stop the process and block traffic again. Preserve the current database set for investigation. Replace the database with the selected stopped snapshot and its matching sidecars; remove stale sidecars from the database being replaced, never mix sets. Restore ownership/permissions and launch the compatible application revision with the intended `DATABASE_PATH` and auth secret. Check health, login/admin access, and data before reopening traffic. Restoring also restores event generation/cursors and queue dedupe/lease state. Existing browser cursors ahead of restored history resync; restoring the server does not rewind browser caches or pending edits. Pending jobs can run as soon as `AppServices` starts, before public traffic reopens; previously delivered work can be redelivered from an older snapshot. Use an isolated controlled mail sink and safe feature-side-effect configuration in drills, not production recipients. A restore loses writes after the snapshot; review expired mail, duplicates, pending edits, and downstream reconciliation before reconnecting clients.
 
 ## Migrations and rollback
 
-Better Auth runs its migrations automatically at startup, before listening. Garden and Kanban currently use `CREATE TABLE IF NOT EXISTS`; there is no general app migration CLI or down-migration system. Review dependency upgrades and schema changes before restarting against production data.
+Better Auth runs its migrations automatically at startup, before listening. Garden, Kanban, and Events currently create missing tables; native jobs run their own `durable_jobs_migrations`. There is no general app migration CLI or down-migration system. Review dependency upgrades and schema changes before restarting against production data.
 
 Before an upgrade, take a stopped backup, retain the old build/source and lockfile, and rehearse the new revision against a copy. Include required data migration steps in release notes. A code rollback alone is unsafe when the new revision changed the schema or stored representation: stop the process, restore the matching pre-upgrade database set and compatible old revision/configuration, then validate before reopening traffic. Plan explicitly for losing post-upgrade writes. Keep browser service-worker caches and pending offline edits in the compatibility review; restoring the server does not rewind browsers.
 

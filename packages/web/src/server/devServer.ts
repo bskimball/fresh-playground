@@ -19,6 +19,7 @@ interface RunningApp {
 
 const running = ({ handler, close }: DevApp, onClosed: () => void): RunningApp => {
   let active = 0
+  const streams = new Set<ServerResponse>()
   let retired = false
   let closing: Promise<void> | undefined
   const closed = Promise.withResolvers<void>()
@@ -36,8 +37,10 @@ const running = ({ handler, close }: DevApp, onClosed: () => void): RunningApp =
     handle(request, response) {
       if (retired) return false
       active += 1
+      if (request.url?.split("?", 1)[0] === "/api/events") streams.add(response)
       // Also fires for a response whose client left while the app was starting.
       finished(response, () => {
+        streams.delete(response)
         active -= 1
         closeWhenIdle()
       })
@@ -46,6 +49,9 @@ const running = ({ handler, close }: DevApp, onClosed: () => void): RunningApp =
     },
     retire() {
       retired = true
+      // SSE is intentionally long-lived; retire it before waiting for ordinary writes.
+      for (const response of streams) response.destroy()
+      streams.clear()
       closeWhenIdle()
       return closed.promise
     },

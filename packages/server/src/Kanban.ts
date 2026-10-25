@@ -1,6 +1,7 @@
 import { AppApi, type KanbanBoard, KanbanCard, type KanbanUpdate } from "@playground/contract"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
+import { Events } from "./Events.ts"
 import { Sqlite } from "./Sqlite.ts"
 
 const cardsCodec = Schema.toCodecJson(Schema.Array(KanbanCard))
@@ -68,6 +69,7 @@ export class Kanban extends Context.Service<
     Kanban,
     Effect.gen(function* () {
       const database = yield* Sqlite
+      const events = yield* Events
       database.exec(`
         CREATE TABLE IF NOT EXISTS kanban_state (
           id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -127,14 +129,14 @@ export class Kanban extends Context.Service<
           cards: update.cards,
           updatedAt: new Date(timestamp),
         }
-        persist(next)
+        events.commit("kanban", () => persist(next))
         yield* Ref.set(store, next)
         return next
       })
 
       return Kanban.of({ get, save })
     }),
-  )
+  ).pipe(Layer.provide(Events.layer))
 }
 
 export const KanbanHandlers = HttpApiBuilder.group(

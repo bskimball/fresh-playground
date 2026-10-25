@@ -2,6 +2,22 @@
 
 This project uses [Semantic Versioning](docs/releases.md#version-policy). The root `package.json` is the version source.
 
+## Current working changes — Unreleased
+
+### Added
+
+- Public `/api/events` SSE invalidations backed by a bounded SQLite replay log, shared browser topic watchers, and network-only refetches after invalidation.
+- Native Effect SQL-backed durable jobs in the same database file, with scoped workers, delayed offers, stable-ID deduplication, and bounded retries. No external broker or queue admin UI.
+- Durable magic-link mail enqueue and worker with expiry bounds and terminal secret scrubbing. Successful auth enqueue is not SMTP acceptance or inbox delivery; at-least-once processing can duplicate delivery.
+- Feature-extension and operational recipes covering layer registration, replay/reconnect, proxy streaming, queue inspection, and stopped-process backup/restore.
+
+### Limits
+
+- Single-process deployment remains required. Full `AppServices` needs a file-backed database; native Effect persistence APIs are unstable. No exactly-once, multi-instance consistency, strong collaboration, or idempotent offline-write guarantee is introduced.
+- Database/WAL/backups can contain pending mail secrets; scrubbing is not secure erasure. Failed auth payloads cannot be replayed after scrubbing: request a fresh link.
+
+The initial scope below is retained as historical context; the working changes above supersede its no-retries/no-durable-queue limitation.
+
 ## 0.1.0 — Unreleased
 
 Initial reusable template scope; no public release or tag is asserted.

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/sql-sqlite-node": "4.0.5",
     "@playground/contract": "*",
     "better-auth": "^1.7.12",
     "effect": "^4.0.5",

@@ -6,6 +6,7 @@ import { admin } from "better-auth/plugins/admin"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { Config, Context, Effect, Layer, Option, Redacted } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { MailQueue } from "./MailQueue.ts"
 import { Mailer } from "./Mailer.ts"
 import { Sqlite } from "./Sqlite.ts"
 
@@ -65,6 +66,7 @@ const authOptions = (options: {
     plugins: [
       admin({ ac, roles, defaultRole: "user", adminRoles: ["admin"] }),
       magicLink({
+        expiresIn: 300,
         sendMagicLink: ({ email, url }) =>
           options.sendMail({
             to: email,
@@ -136,6 +138,7 @@ export class Auth extends Context.Service<
         )
       }
 
+      const mailQueue = yield* MailQueue
       const database = yield* Sqlite
       const host = config.host === "0.0.0.0" || config.host === "::" ? "127.0.0.1" : config.host
       const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
@@ -155,7 +158,7 @@ export class Auth extends Context.Service<
         secret: Option.match(config.secret, { onNone: () => undefined, onSome: Redacted.value }),
         methods,
         socialProviders,
-        sendMail: (mail) => run(mailer.send(mail)),
+        sendMail: (mail) => run(mailQueue.enqueue(mail)),
       })
 
       // Before `betterAuth()`, whose startup check reports missing tables.

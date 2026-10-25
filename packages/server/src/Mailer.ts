@@ -1,3 +1,4 @@
+import { Socket } from "node:net"
 import { Config, Context, Data, Effect, Layer, Option, Redacted } from "effect"
 import nodemailer from "nodemailer"
 
@@ -5,6 +6,7 @@ export interface Mail {
   readonly to: string
   readonly subject: string
   readonly text: string
+  readonly messageId?: string
 }
 
 export class MailDeliveryError extends Data.TaggedError("MailDeliveryError")<{
@@ -68,26 +70,64 @@ export class Mailer extends Context.Service<
           ),
         )
       }
-      const sender = nodemailer.createTransport({
+      const options = {
         host: config.host,
         port: config.port,
         secure: config.secure,
         requireTLS: config.requireTLS,
+        connectionTimeout: 10_000,
+        greetingTimeout: 5_000,
+        socketTimeout: 15_000,
         ...(Option.isSome(config.user) && Option.isSome(config.password)
           ? { auth: { user: config.user.value, pass: Redacted.value(config.password.value) } }
           : {}),
-      })
+      }
       return Mailer.of({
         transport,
         send: (mail) =>
-          Effect.tryPromise({
-            try: async () => {
-              const result = await sender.sendMail({ from: config.from, ...mail })
-              if (result.rejected.length > 0) throw new Error("Recipient rejected")
-            },
-            // Provider errors can contain credentials or message details.
-            catch: () => new MailDeliveryError({ message: "SMTP delivery failed" }),
-          }),
+          Effect.acquireUseRelease(
+            Effect.sync(() => new Socket()),
+            (socket) =>
+              Effect.tryPromise({
+                try: async () => {
+                  const sender = nodemailer.createTransport({
+                    ...options,
+                    // Own the underlying TCP socket per attempt, including across STARTTLS.
+                    // Nodemailer still performs TLS (with verification/SNI), auth and SMTP.
+                    getSocket: (_options, callback) => {
+                      if (socket.destroyed) return callback(new Error("SMTP attempt closed"), false)
+                      const timer = setTimeout(
+                        () => socket.destroy(new Error("SMTP connection timed out")),
+                        10_000,
+                      )
+                      const failed = (error: Error) => callback(error, false)
+                      socket.once("close", () => clearTimeout(timer))
+                      socket.once("error", failed)
+                      socket.connect({ host: config.host, port: config.port }, () => {
+                        clearTimeout(timer)
+                        socket.removeListener("error", failed)
+                        // TLS upgrades remove their own listeners; retain an error sink for cleanup.
+                        socket.on("error", () => {})
+                        callback(null, { connection: socket })
+                      })
+                    },
+                  })
+                  const result = await sender.sendMail({ from: config.from, ...mail })
+                  if (result.rejected.length > 0) throw new Error("Recipient rejected")
+                },
+                // Provider errors can contain credentials or message details.
+                catch: () => new MailDeliveryError({ message: "SMTP delivery failed" }),
+              }),
+            (socket) =>
+              Effect.promise(
+                () =>
+                  new Promise<void>((resolve) => {
+                    if (socket.closed) return resolve()
+                    socket.once("close", () => resolve())
+                    socket.destroy()
+                  }),
+              ),
+          ),
       })
     }),
   )

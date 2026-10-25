@@ -1,5 +1,7 @@
 import type { KanbanCard } from "@playground/contract"
 import { describe, expect, it } from "vite-plus/test"
+import { createActor } from "xstate"
+import { decodeRealtimeTopics, realtimeTopicForPath } from "../../client/Realtime.ts"
 import {
   computeNavPillDelta,
   hasThemeCookie,
@@ -10,6 +12,7 @@ import {
 import { safeNext } from "../../server/runtime.ts"
 import {
   canAcceptNewCard,
+  kanbanMachine,
   moveCardInList,
   reconcileKanbanSave,
   shiftCardInColumn,
@@ -85,6 +88,50 @@ describe("Kanban board ordering & validation", () => {
       cards: newerCards,
       tokenToAck: "stale-token-1",
     })
+  })
+})
+
+describe("realtime freshness boundary", () => {
+  it("schema-decodes public topics and rejects malformed or unrelated messages", () => {
+    expect(decodeRealtimeTopics("invalidate", '{"topic":"garden"}')).toEqual(["garden"])
+    expect(decodeRealtimeTopics("invalidate", '{"topic":"kanban"}')).toEqual(["kanban"])
+    expect(decodeRealtimeTopics("resync", '{"topics":["garden","kanban","garden"]}')).toEqual([
+      "garden",
+      "kanban",
+    ])
+    for (const data of ["not JSON", '{"topic":"theme"}', "{}", { topic: "garden" }]) {
+      expect(decodeRealtimeTopics("invalidate", data)).toEqual([])
+    }
+    expect(decodeRealtimeTopics("resync", '{"topics":["garden","private"]}')).toEqual([])
+    expect(decodeRealtimeTopics("heartbeat", "{}")).toEqual([])
+    expect(decodeRealtimeTopics("message", '{"topic":"garden"}')).toEqual([])
+  })
+
+  it("maps only exact public snapshot endpoints to realtime network-read requirements", () => {
+    expect(realtimeTopicForPath("/api/garden")).toBe("garden")
+    expect(realtimeTopicForPath("/api/kanban")).toBe("kanban")
+    for (const path of ["/api/events", "/api/auth/session", "/api/hello", "/api/garden/settings"]) {
+      expect(realtimeTopicForPath(path)).toBeUndefined()
+    }
+  })
+
+  it("keeps pending local board edits when freshness requests revalidation", () => {
+    const actor = createActor(kanbanMachine, {
+      input: { board: { cards: sampleCards, updatedAt: new Date(0) } },
+    }).start()
+    try {
+      actor.send({ type: "MOVE_CARD", cardId: "c1", toStatus: "done" })
+      const before = actor.getSnapshot()
+      expect(before.matches({ board: "pending" })).toBe(true)
+      actor.send({ type: "REVALIDATE" })
+      const after = actor.getSnapshot()
+      expect(after.matches({ board: "pending", freshness: "waiting" })).toBe(true)
+      expect(after.context.cards).toEqual(before.context.cards)
+      expect(after.context.revision).toBe(before.context.revision)
+      expect(after.context.cards.find((card) => card.id === "c1")?.status).toBe("done")
+    } finally {
+      actor.stop()
+    }
   })
 })
 

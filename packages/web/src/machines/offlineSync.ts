@@ -1,4 +1,6 @@
+import type { EventTopic } from "@playground/contract"
 import { Effect, Option, Schema } from "effect"
+import { watchRealtime } from "../client/Realtime.ts"
 
 const tabId = Math.random().toString(36).slice(2)
 export const SW_MUTATION_CHANNEL = "playground-garden"
@@ -132,7 +134,15 @@ export function createOfflineStorage<T, E>(options: {
   return { load, save, clearIf, watch }
 }
 
+// Only these public domain channels participate in SSE. Theme and any other
+// document-only events must never become server topics by string convention.
+const freshnessTopics = new Map<string, EventTopic>([
+  ["garden-mutated", "garden"],
+  ["kanban-mutated", "kanban"],
+])
+
 export function createFreshnessChannel(eventName: string) {
+  const topic = freshnessTopics.get(eventName)
   const publish = () => {
     if (typeof window === "undefined") return
     window.dispatchEvent(new Event(eventName))
@@ -159,12 +169,14 @@ export function createFreshnessChannel(eventName: string) {
         if (event.data === eventName) refresh()
       }
     }
+    const stopRealtime = topic === undefined ? () => {} : watchRealtime(topic, refresh)
     document.addEventListener("visibilitychange", visible)
     window.addEventListener("online", refresh)
     window.addEventListener("pageshow", restored)
     window.addEventListener(eventName, refresh)
     refresh()
     return () => {
+      stopRealtime()
       channel?.close()
       document.removeEventListener("visibilitychange", visible)
       window.removeEventListener("online", refresh)

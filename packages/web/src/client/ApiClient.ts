@@ -1,8 +1,9 @@
 import { AppApi } from "@playground/contract"
-import { Layer, ManagedRuntime, Schedule } from "effect"
-import { FetchHttpClient, HttpClient } from "effect/http"
+import { Effect, Layer, ManagedRuntime, Schedule } from "effect"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { HttpApiClient } from "effect/http-api"
 import { AtomHttpApi } from "effect/reactivity"
+import { acknowledgeRealtimeRead, realtimeReadPolicy, realtimeTopicForPath } from "./Realtime.ts"
 
 // Islands also render once on the server, where no request is made, so the
 // origin is only needed in the browser.
@@ -13,9 +14,28 @@ const transformClient = (client: HttpClient.HttpClient) => {
     HttpClient.retryTransient({ schedule: Schedule.exponential(200), times: 2 }),
   )
   return client.pipe(
-    HttpClient.transform((response, request) =>
-      request.method === "GET" || request.method === "HEAD" ? reads.execute(request) : response,
-    ),
+    HttpClient.transform((response, request) => {
+      if (request.method !== "GET" && request.method !== "HEAD") return response
+      const topic = realtimeTopicForPath(
+        new URL(request.url, baseUrl ?? "http://localhost").pathname,
+      )
+      const policy = topic === undefined ? undefined : realtimeReadPolicy(topic)
+      if (!policy?.networkOnly) return reads.execute(request)
+      // The SW may serve ordinary offline reads from snapshots, but a realtime
+      // resync must not be acknowledged by such a cached response.
+      return reads
+        .execute(HttpClientRequest.setHeader(request, "x-playground-network-only", "true"))
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              if (topic !== undefined && result.status >= 200 && result.status < 300) {
+                acknowledgeRealtimeRead(topic, policy.revision)
+              }
+            }),
+          ),
+        )
+    }),
   )
 }
 

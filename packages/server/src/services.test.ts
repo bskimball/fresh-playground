@@ -1,13 +1,22 @@
-import { createServer } from "node:net"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { createServer, type Socket } from "node:net"
 import { DatabaseSync } from "node:sqlite"
-import { GardenSaturated } from "@playground/contract"
-import { ConfigProvider, Effect, Exit, Layer } from "effect"
+import { EventsApi, GardenSaturated } from "@playground/contract"
+import { HttpApi, HttpApiBuilder } from "effect/http-api"
+import { HttpMiddleware, HttpRouter, HttpServer } from "effect/http"
+import { ConfigProvider, Effect, Exit, Layer, Schedule, Schema, Stream } from "effect"
 import { describe, expect, it } from "vite-plus/test"
 import { Garden, moistureAt } from "./Garden.ts"
 import { Kanban, seedCards } from "./Kanban.ts"
-import { Sqlite } from "./Sqlite.ts"
+import { DatabasePath, Sqlite } from "./Sqlite.ts"
+import { Events, EventsHandlers } from "./Events.ts"
+import { Jobs, PersistedQueue, runWorker } from "./Jobs.ts"
+import { MailJob, MailQueue } from "./MailQueue.ts"
 import { Mailer } from "./Mailer.ts"
 import { Auth } from "./Auth.ts"
+import { AppServices } from "./index.ts"
 
 describe("email configuration and SMTP delivery", () => {
   const configured = (values: Record<string, string>) =>
@@ -40,6 +49,7 @@ describe("email configuration and SMTP delivery", () => {
     )
     const auth = Auth.layer.pipe(
       Layer.provide(Mailer.layer),
+      Layer.provide(Layer.succeed(MailQueue, { enqueue: () => Effect.void })),
       Layer.provide(Sqlite.memory),
       Layer.provide(config),
     )
@@ -50,6 +60,75 @@ describe("email configuration and SMTP delivery", () => {
         }).pipe(Effect.provide(auth)),
       ),
     ).rejects.toThrow("AUTH_MAGIC_LINK=true requires")
+  })
+
+  it("closes hanging SMTP attempts on timeout and scoped interruption before the next send", async () => {
+    const sockets = new Set<Socket>()
+    let messages = 0
+    let peakConnections = 0
+    const receiver = createServer((socket) => {
+      sockets.add(socket)
+      peakConnections = Math.max(peakConnections, sockets.size)
+      socket.on("close", () => sockets.delete(socket))
+      socket.on("error", () => {})
+      socket.setEncoding("utf8")
+      socket.write("220 localhost SMTP ready\r\n")
+      let buffer = ""
+      let data = false
+      socket.on("data", (chunk) => {
+        buffer += chunk
+        let end: number
+        while ((end = buffer.indexOf("\r\n")) !== -1) {
+          const line = buffer.slice(0, end)
+          buffer = buffer.slice(end + 2)
+          if (data) {
+            // Simulate a receiver that consumed DATA but never acknowledges it.
+            if (line === ".") messages++
+          } else if (line.startsWith("EHLO")) socket.write("250 localhost\r\n")
+          else if (line === "DATA") {
+            data = true
+            socket.write("354 send message\r\n")
+          } else socket.write("250 OK\r\n")
+        }
+      })
+    })
+    await new Promise<void>((resolve) => receiver.listen(0, "127.0.0.1", resolve))
+    try {
+      const address = receiver.address()
+      if (address === null || typeof address === "string") throw new Error("No SMTP address")
+      const layer = configured({
+        NODE_ENV: "test",
+        MAIL_TRANSPORT: "smtp",
+        SMTP_HOST: "127.0.0.1",
+        SMTP_PORT: String(address.port),
+        SMTP_REQUIRE_TLS: "false",
+        MAIL_FROM: "sender@example.test",
+      })
+      const started = Date.now()
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const mailer = yield* Mailer
+          const send = mailer.send({ to: "reader@example.test", subject: "Hang", text: "Local" })
+          expect(Exit.isFailure(yield* Effect.exit(send.pipe(Effect.timeout("600 millis"))))).toBe(
+            true,
+          )
+          expect(messages).toBe(1)
+          yield* waitFor(() => sockets.size === 0)
+          yield* send.pipe(Effect.forkScoped)
+          yield* waitFor(() => messages === 2)
+          // Returning releases the scope while the second send is still waiting for SMTP.
+        }).pipe(Effect.scoped, Effect.provide(layer)),
+      )
+      await Effect.runPromise(waitFor(() => sockets.size === 0))
+      expect(messages).toBe(2)
+      expect(peakConnections).toBe(1)
+      expect(Date.now() - started).toBeLessThan(3000)
+    } finally {
+      for (const socket of sockets) socket.destroy()
+      await new Promise<void>((resolve, reject) =>
+        receiver.close((error) => (error ? reject(error) : resolve())),
+      )
+    }
   })
 
   it("delivers through a local SMTP receiver and propagates recipient rejection", async () => {
@@ -111,6 +190,38 @@ describe("email configuration and SMTP delivery", () => {
       expect(messages).toHaveLength(1)
       expect(messages[0]).toContain("Subject: SMTP smoke")
       expect(messages[0]).toContain("A local delivery")
+      const temp = temporaryDatabase()
+      try {
+        const queued = MailQueue.layer.pipe(
+          Layer.provide(layer),
+          Layer.provide(jobLayer(temp.filename)),
+        )
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* (yield* MailQueue).enqueue({
+              to: "reader@example.test",
+              subject: "Queued SMTP",
+              text: "Durably delivered",
+            })
+            yield* waitFor(() => messages.length === 2)
+          }).pipe(Effect.provide(queued)),
+        )
+        expect(messages[1]).toContain("Subject: Queued SMTP")
+        expect(messages[1]).toContain("Durably delivered")
+        expect(messages[1]).toMatch(/Message-ID: <[a-f0-9-]+@auth-mail.local>/)
+        const db = new DatabaseSync(temp.filename)
+        try {
+          expect(
+            db
+              .prepare("SELECT state, element FROM durable_jobs WHERE queue_name = 'auth-mail'")
+              .get(),
+          ).toMatchObject({ state: "completed", element: "{}" })
+        } finally {
+          db.close()
+        }
+      } finally {
+        temp.close()
+      }
     } finally {
       await new Promise<void>((resolve, reject) =>
         receiver.close((error) => (error ? reject(error) : resolve())),
@@ -213,4 +324,431 @@ describe("Garden & Kanban SQLite persistence", () => {
       db.close()
     }
   })
+})
+
+const temporaryDatabase = () => {
+  const directory = mkdtempSync(join(tmpdir(), "playground-services-"))
+  return {
+    filename: join(directory, "app.db"),
+    close: () => rmSync(directory, { recursive: true, force: true }),
+  }
+}
+const jobLayer = (filename: string) =>
+  Jobs.pipe(Layer.provide(Layer.succeed(DatabasePath, filename)))
+const waitFor = (predicate: () => boolean) =>
+  Effect.gen(function* () {
+    for (let i = 0; i < 100; i++) {
+      if (predicate()) return
+      yield* Effect.sleep("50 millis")
+    }
+    throw new Error("Condition did not settle")
+  })
+
+describe("durable public invalidations", () => {
+  it("commits domain rows and events together; failures leave rows and Refs unchanged, including reset", async () => {
+    const db = new DatabaseSync(":memory:")
+    try {
+      const layer = Layer.mergeAll(Garden.layer, Kanban.layer, Events.layer).pipe(
+        Layer.provide(Layer.succeed(Sqlite, db)),
+      )
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const garden = yield* Garden
+          const kanban = yield* Kanban
+          const events = yield* Events
+          const initial = events.replay()[0]!
+          expect(initial.event).toBe("resync")
+          if (!("id" in initial)) throw new Error("Missing head")
+          yield* garden.water
+          yield* kanban.save({ cards: [] })
+          yield* garden.reset
+          const replay = events.replay(initial.id)
+          expect(
+            replay.map((event) => (event.event === "invalidate" ? event.data.topic : "wrong")),
+          ).toEqual(["garden", "kanban", "garden"])
+          const before = yield* garden.get
+          db.exec(
+            "CREATE TRIGGER fail_event BEFORE INSERT ON public_events BEGIN SELECT RAISE(ABORT, 'event insert failed'); END",
+          )
+          expect(Exit.isFailure(yield* Effect.exit(garden.water))).toBe(true)
+          expect(Exit.isFailure(yield* Effect.exit(garden.reset))).toBe(true)
+          expect(Exit.isFailure(yield* Effect.exit(kanban.save({ cards: seedCards })))).toBe(true)
+          expect(yield* garden.get).toEqual(before)
+          expect((yield* kanban.get).cards).toEqual([])
+          expect(
+            (db.prepare("SELECT waters FROM garden_state").get() as { waters: number }).waters,
+          ).toBe(before.waters)
+          expect(events.replay(initial.id)).toEqual(replay)
+          db.exec("DROP TRIGGER fail_event")
+          yield* garden.water
+          yield* garden.water
+          yield* garden.water
+          const count = db.prepare("SELECT count(*) AS n FROM public_events").get()
+          expect(Exit.isFailure(yield* Effect.exit(garden.water))).toBe(true)
+          expect(db.prepare("SELECT count(*) AS n FROM public_events").get()).toEqual(count)
+        }).pipe(Effect.provide(layer)),
+      )
+    } finally {
+      db.close()
+    }
+  })
+
+  it("reopens a real file, replays in bounded order and explicitly resets invalid, future, foreign and pruned cursors", async () => {
+    const temp = temporaryDatabase()
+    try {
+      const build = () =>
+        Layer.mergeAll(Events.layer, Garden.layer).pipe(
+          Layer.provideMerge(Layer.effect(Sqlite, Sqlite.make(temp.filename))),
+        )
+      const cursor = await Effect.runPromise(
+        Effect.gen(function* () {
+          const events = yield* Events
+          const head = events.replay()[0]!
+          if (!("id" in head)) throw new Error("Missing head")
+          const garden = yield* Garden
+          yield* garden.water
+          return head.id
+        }).pipe(Effect.provide(build())),
+      )
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const events = yield* Events
+          const garden = yield* Garden
+          expect((yield* garden.get).waters).toBe(1)
+          expect(events.replay(cursor)).toHaveLength(1)
+          for (const invalid of [
+            undefined,
+            "bad",
+            "foreign:1",
+            cursor.replace(/:\d+$/, ":9999999"),
+          ])
+            expect(events.replay(invalid)[0]?.event).toBe("resync")
+          for (let i = 0; i < 1005; i++) events.commit("kanban", () => undefined)
+          expect(events.replay(cursor)[0]?.event).toBe("resync")
+          const db = yield* Sqlite
+          expect(
+            (db.prepare("SELECT count(*) AS n FROM public_events").get() as { n: number }).n,
+          ).toBe(1000)
+          const generation = cursor.split(":")[0]
+          const batch = events.replay(`${generation}:6`)
+          expect(batch).toHaveLength(100)
+          expect(batch.map((e) => ("id" in e ? Number(e.id.split(":")[1]) : 0))).toEqual(
+            Array.from({ length: 100 }, (_, i) => i + 7),
+          )
+          events.stop()
+          expect(yield* Stream.runCollect(events.stream(cursor))).toEqual([])
+        }).pipe(Effect.provide(build())),
+      )
+    } finally {
+      temp.close()
+    }
+  })
+})
+
+describe("native durable jobs", () => {
+  it("persists delayed acceptance across recreation and reclaims an expired lease with its attempt count", async () => {
+    const temp = temporaryDatabase()
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const q = yield* PersistedQueue.make({
+            name: "restart",
+            schema: Schema.String,
+            maxAttempts: 5,
+          })
+          yield* q.offer("retained", { id: "stable", delay: "1 second" })
+        }).pipe(Effect.provide(jobLayer(temp.filename))),
+      )
+      const db = new DatabaseSync(temp.filename)
+      try {
+        const row = db.prepare("SELECT * FROM durable_jobs WHERE id = 'stable'").get()!
+        expect(row.state).toBe("pending")
+        expect(String(row.visible_at) > String(row.created_at)).toBe(true)
+        // Simulate a process that died after claiming attempt 1, without its release finalizer.
+        db.exec(
+          "UPDATE durable_jobs SET acquired_at = datetime('now', '-120 seconds'), acquired_by = 'dead-process', attempts = 1, visible_at = datetime('now', '-1 second')",
+        )
+      } finally {
+        db.close()
+      }
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const q = yield* PersistedQueue.make({
+            name: "restart",
+            schema: Schema.String,
+            maxAttempts: 5,
+          })
+          yield* q.take((value, metadata) =>
+            Effect.sync(() => {
+              expect(value).toBe("retained")
+              expect(metadata).toEqual({ id: "stable", attempts: 2 })
+            }),
+          )
+        }).pipe(Effect.timeout("5 seconds"), Effect.provide(jobLayer(temp.filename))),
+      )
+    } finally {
+      temp.close()
+    }
+  })
+
+  it("retries handler failures, retains terminal metadata, and keeps the scoped worker alive", async () => {
+    const temp = temporaryDatabase()
+    const db = new DatabaseSync(temp.filename)
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const q = yield* PersistedQueue.make({
+            name: "retry",
+            schema: Schema.String,
+            maxAttempts: 2,
+            retrySchedule: Schedule.spaced("1 millis"),
+          })
+          yield* q.offer("secret payload", { id: "failing" })
+          const attempts: number[] = []
+          yield* runWorker(q, (_, metadata) =>
+            Effect.sync(() => {
+              attempts.push(metadata.attempts)
+            }).pipe(Effect.andThen(Effect.fail(new Error("secret provider failure")))),
+          )
+          yield* waitFor(
+            () =>
+              db.prepare("SELECT state FROM durable_jobs WHERE id = 'failing'").get()?.state ===
+              "failed",
+          )
+          expect(attempts).toEqual([1, 2])
+          expect(
+            String(
+              db.prepare("SELECT last_failure FROM durable_jobs WHERE id = 'failing'").get()
+                ?.last_failure,
+            ),
+          ).not.toContain("secret")
+          yield* q.offer("next", { id: "next" })
+          yield* waitFor(
+            () =>
+              db.prepare("SELECT state FROM durable_jobs WHERE id = 'next'").get()?.state ===
+              "failed",
+          )
+        }).pipe(Effect.scoped, Effect.provide(jobLayer(temp.filename))),
+      )
+    } finally {
+      db.close()
+      temp.close()
+    }
+  })
+})
+
+describe("auth mail durable handoff", () => {
+  it("suppresses expired mail after restart and removes its secrets", async () => {
+    const temp = temporaryDatabase()
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const q = yield* PersistedQueue.make({ name: "auth-mail", schema: MailJob })
+          yield* q.offer(
+            {
+              to: "expired@example.test",
+              subject: "Expired",
+              text: "expired secret link",
+              deadline: Date.now() - 1,
+            },
+            { id: "expired" },
+          )
+        }).pipe(Effect.provide(jobLayer(temp.filename))),
+      )
+      let sent = 0
+      const db = new DatabaseSync(temp.filename)
+      try {
+        const layer = MailQueue.layer.pipe(
+          Layer.provide(
+            Layer.succeed(Mailer, {
+              transport: "smtp",
+              send: () =>
+                Effect.sync(() => {
+                  sent += 1
+                }),
+            }),
+          ),
+          Layer.provide(jobLayer(temp.filename)),
+        )
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* MailQueue
+            yield* Effect.sleep("500 millis")
+            expect(sent).toBe(0)
+            expect(
+              db.prepare("SELECT * FROM durable_jobs WHERE id = 'expired'").get(),
+            ).toBeUndefined()
+          }).pipe(Effect.provide(layer)),
+        )
+      } finally {
+        db.close()
+      }
+    } finally {
+      temp.close()
+    }
+  })
+
+  it("propagates durable enqueue failure through the auth callback rather than sending SMTP", async () => {
+    const db = new DatabaseSync(":memory:")
+    let enqueues = 0
+    try {
+      const layer = Auth.layer.pipe(
+        Layer.provide(Layer.succeed(Sqlite, db)),
+        Layer.provide(
+          Layer.succeed(Mailer, {
+            transport: "smtp",
+            send: () => Effect.die("SMTP must not be called"),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(MailQueue, {
+            enqueue: () =>
+              Effect.suspend(() => {
+                enqueues++
+                return Effect.fail(
+                  new PersistedQueue.PersistedQueueError({ message: "Durable acceptance failed" }),
+                )
+              }),
+          }),
+        ),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnvRecord({
+              NODE_ENV: "test",
+              AUTH_MAGIC_LINK: "true",
+              BETTER_AUTH_SECRET: "test-only-secret-that-is-at-least-32-characters",
+            }),
+          ),
+        ),
+      )
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const auth = yield* Auth
+          const outcome = yield* Effect.exit(
+            Effect.tryPromise(() =>
+              auth.api.signInMagicLink({
+                headers: new Headers(),
+                body: { email: "reader@example.test" },
+              }),
+            ),
+          )
+          expect(Exit.isFailure(outcome)).toBe(true)
+          expect(enqueues).toBe(1)
+        }).pipe(Effect.provide(layer)),
+      )
+    } finally {
+      db.close()
+    }
+  })
+
+  it("does not report durable acceptance when the native queue cannot write", async () => {
+    const temp = temporaryDatabase()
+    try {
+      const db = new DatabaseSync(temp.filename)
+      try {
+        const layer = MailQueue.layer.pipe(
+          Layer.provide(Layer.succeed(Mailer, { transport: "smtp", send: () => Effect.void })),
+          Layer.provide(jobLayer(temp.filename)),
+        )
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const queue = yield* MailQueue
+            db.exec(
+              "CREATE TRIGGER reject_job BEFORE INSERT ON durable_jobs BEGIN SELECT RAISE(ABORT, 'disk acceptance failed'); END",
+            )
+            const outcome = yield* Effect.exit(
+              queue.enqueue({
+                to: "reader@example.test",
+                subject: "No write",
+                text: "Do not lose me",
+              }),
+            )
+            expect(Exit.isFailure(outcome)).toBe(true)
+          }).pipe(Effect.provide(layer)),
+        )
+      } finally {
+        db.close()
+      }
+    } finally {
+      temp.close()
+    }
+  })
+})
+
+it("serves the native public SSE contract without compression and releases an aborted connection", async () => {
+  const db = new DatabaseSync(":memory:")
+  const routes = HttpApiBuilder.layer(HttpApi.make("app").add(EventsApi)).pipe(
+    Layer.provide(EventsHandlers),
+    Layer.provide(Events.layer),
+    Layer.provide(Layer.succeed(Sqlite, db)),
+  )
+  const app = HttpRouter.toWebHandler(
+    Layer.mergeAll(
+      routes,
+      HttpRouter.middleware(HttpMiddleware.compression(), { global: true }),
+    ).pipe(Layer.provideMerge(HttpServer.layerServices)),
+    { disableLogger: true },
+  )
+  try {
+    const controller = new AbortController()
+    const response = await app.handler(
+      new Request("http://localhost/api/events", {
+        headers: { "accept-encoding": "gzip, br" },
+        signal: controller.signal,
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get("content-type")).toContain("text/event-stream")
+    expect(response.headers.get("cache-control")).toBe("no-store, no-transform")
+    expect([null, "identity"]).toContain(response.headers.get("content-encoding"))
+    const reader = response.body!.getReader()
+    const first = new TextDecoder().decode((await reader.read()).value)
+    expect(first).toContain("event: resync")
+    expect(first).toContain('"topics":["garden","kanban"]')
+    expect(first).not.toMatch(/user|mail|job|token/)
+    controller.abort()
+    await reader.cancel().catch(() => undefined)
+  } finally {
+    await app.dispose()
+    db.close()
+  }
+})
+
+it("composes auth, events and the mail worker once over the same configured file and closes their scopes", async () => {
+  const temp = temporaryDatabase()
+  try {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const auth = yield* Auth
+        expect(auth.methods.magicLink).toBe(false)
+        yield* auth.session(new Headers())
+        const events = yield* Events
+        expect(events.replay()[0]?.event).toBe("resync")
+        yield* (yield* Garden).water
+      }).pipe(
+        Effect.provide(AppServices),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnvRecord({
+              DATABASE_PATH: temp.filename,
+              NODE_ENV: "test",
+              AUTH_MAGIC_LINK: "false",
+              MAIL_TRANSPORT: "disabled",
+              BETTER_AUTH_SECRET: "test-only-secret-that-is-at-least-32-characters",
+            }),
+          ),
+        ),
+      ),
+    )
+    const db = new DatabaseSync(temp.filename)
+    try {
+      expect(db.prepare("SELECT count(*) AS n FROM public_events").get()?.n).toBe(1)
+      expect(db.prepare("SELECT count(*) AS n FROM durable_jobs").get()?.n).toBe(0)
+      expect(db.prepare('SELECT count(*) AS n FROM "user"').get()?.n).toBe(0)
+    } finally {
+      db.close()
+    }
+  } finally {
+    temp.close()
+  }
 })

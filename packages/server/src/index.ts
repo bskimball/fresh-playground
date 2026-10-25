@@ -7,13 +7,19 @@ import { Auth } from "./Auth.ts"
 import { Garden, GardenHandlers } from "./Garden.ts"
 import { Kanban, KanbanHandlers } from "./Kanban.ts"
 import { Mailer } from "./Mailer.ts"
-import { Sqlite } from "./Sqlite.ts"
+import { DatabasePath, Sqlite } from "./Sqlite.ts"
+import { Events, EventsHandlers } from "./Events.ts"
+import { Jobs } from "./Jobs.ts"
+import { MailQueue } from "./MailQueue.ts"
 
 export { Auth, AuthRoutes, webHeaders } from "./Auth.ts"
 export { Garden, type GardenStore, moistureAt } from "./Garden.ts"
 export { Kanban, seedCards } from "./Kanban.ts"
 export { Mailer } from "./Mailer.ts"
-export { Sqlite } from "./Sqlite.ts"
+export { Sqlite, DatabasePath } from "./Sqlite.ts"
+export { Events } from "./Events.ts"
+export { Jobs, JobsSql, JobsStore, PersistedQueue, runWorker } from "./Jobs.ts"
+export { MailQueue, MailJob } from "./MailQueue.ts"
 
 const SystemHandlers = HttpApiBuilder.group(AppApi, "system", (handlers) =>
   Effect.succeed(
@@ -27,14 +33,21 @@ const SystemHandlers = HttpApiBuilder.group(AppApi, "system", (handlers) =>
 )
 
 /**
- * Every app service over one shared SQLite connection. Provide it once so
- * pages, API handlers, and health checks share the same instances.
+ * One app scope: domain/auth share raw SQLite; native jobs use a second
+ * connection to the same resolved file. Provide once so routes share instances.
+ * Queue offers are not atomic with raw domain/auth writes.
  */
 export const AppServices = Layer.mergeAll(
+  Events.layer,
   Garden.layer,
   Kanban.layer,
-  Auth.layer.pipe(Layer.provide(Mailer.layer)),
-).pipe(Layer.provide(Sqlite.layer))
+  Auth.layer.pipe(Layer.provide(MailQueue.layer), Layer.provide(Mailer.layer)),
+).pipe(
+  Layer.provide(Jobs),
+  Layer.provide(Sqlite.configured),
+  Layer.provide(DatabasePath.layer),
+  Layer.orDie,
+)
 
 /**
  * What a route layer may still need once served: `AppServices`, the router, and the
@@ -54,6 +67,6 @@ export type AppRoutes = Layer.Layer<
 
 /** Mounts `AppApi` on the `HttpRouter`. */
 export const ApiRoutes: AppRoutes = HttpApiBuilder.layer(AppApi).pipe(
-  Layer.provide([GardenHandlers, KanbanHandlers, AdminHandlers, SystemHandlers]),
+  Layer.provide([GardenHandlers, KanbanHandlers, AdminHandlers, SystemHandlers, EventsHandlers]),
   Layer.provide(AuthenticationLive),
 )

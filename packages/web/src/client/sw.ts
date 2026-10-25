@@ -32,6 +32,8 @@ const OFFLINE_WARM_ROUTES = [...HTML_ROUTES, "/api/garden", "/api/kanban", "/api
 const NETWORK_FIRST_PATHS = new Set(OFFLINE_WARM_ROUTES)
 
 let authGeneration = 0
+const snapshotVersions = new Map<string, number>()
+const snapshotSuccesses = new Map<string, number>()
 
 const isImmutablePath = (pathname: string) =>
   pathname.startsWith("/assets/") ||
@@ -43,24 +45,32 @@ const cachePut = async (
   request: Request | string,
   response: Response,
   generation = authGeneration,
+  isCurrent = () => true,
 ) => {
-  if (!response.ok || generation !== authGeneration) return response
+  if (!response.ok || generation !== authGeneration || !isCurrent()) return response
   const cache = await sw.caches.open(CACHE_NAME)
-  if (generation !== authGeneration) return response
+  if (generation !== authGeneration || !isCurrent()) return response
   await cache.put(request, response.clone())
   return response
 }
 
+const fetchSnapshot = async (
+  path: string,
+  request: Request | string,
+  generation = authGeneration,
+) => {
+  const version = (snapshotVersions.get(path) ?? 0) + 1
+  snapshotVersions.set(path, version)
+  // A successful realtime refetch must reach the network, not the HTTP cache.
+  const response = await fetch(request, { credentials: "same-origin", cache: "no-store" })
+  if (response.ok && generation === authGeneration) {
+    snapshotSuccesses.set(path, Math.max(snapshotSuccesses.get(path) ?? 0, version))
+  }
+  return cachePut(path, response, generation, () => snapshotSuccesses.get(path) === version)
+}
+
 const refreshOfflineRoutes = async (generation = authGeneration) => {
-  const cache = await sw.caches.open(CACHE_NAME)
-  await Promise.allSettled(
-    OFFLINE_WARM_ROUTES.map(async (path) => {
-      const response = await fetch(path, { credentials: "same-origin" })
-      if (response.ok && generation === authGeneration) {
-        await cache.put(path, response)
-      }
-    }),
-  )
+  await Promise.allSettled(OFFLINE_WARM_ROUTES.map((path) => fetchSnapshot(path, path, generation)))
 }
 
 const invalidatePersonalizedPages = async () => {
@@ -113,6 +123,12 @@ sw.addEventListener("fetch", (event) => {
   const url = new URL(request.url)
   if (url.origin !== sw.location.origin) return
 
+  // Streaming responses must never enter either snapshot or immutable caches.
+  if (url.pathname === "/api/events") {
+    event.respondWith(fetch(request, { cache: "no-store" }))
+    return
+  }
+
   if (
     request.method !== "GET" &&
     (url.pathname === "/logout" || url.pathname.startsWith("/api/auth/"))
@@ -142,11 +158,15 @@ sw.addEventListener("fetch", (event) => {
 
   if (NETWORK_FIRST_PATHS.has(url.pathname)) {
     const generation = authGeneration
+    const networkOnly = request.headers.get("x-playground-network-only") === "true"
     event.respondWith(
       (async () => {
         try {
-          return await cachePut(url.pathname, await fetch(request), generation)
-        } catch {
+          return await fetchSnapshot(url.pathname, request, generation)
+        } catch (error) {
+          // A cached snapshot cannot satisfy an SSE resync. Leave the domain's
+          // freshness requirement pending until a later successful network read.
+          if (networkOnly) throw error
           const cached = (await sw.caches.match(url.pathname)) ?? (await sw.caches.match(request))
           if (cached) return cached
           throw new Error(`Offline and no cached response for ${url.pathname}`)

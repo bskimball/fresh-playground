@@ -16,7 +16,7 @@ packages/web server ◄────────┘
 Effect HttpRouter + React server rendering + built assets
        │
        ▼
-shared Sqlite connection → persistent app.db (WAL)
+raw Sqlite (domain/auth/events) + native JobsSql → same persistent app.db (WAL)
 ```
 
 ```text
@@ -46,17 +46,23 @@ Excerpt from `packages/server/src/index.ts`:
 
 ```ts
 export const AppServices = Layer.mergeAll(
+  Events.layer,
   Garden.layer,
   Kanban.layer,
-  Auth.layer.pipe(Layer.provide(Mailer.layer)),
-).pipe(Layer.provide(Sqlite.layer))
+  Auth.layer.pipe(Layer.provide(MailQueue.layer), Layer.provide(Mailer.layer)),
+).pipe(
+  Layer.provide(Jobs),
+  Layer.provide(Sqlite.configured),
+  Layer.provide(DatabasePath.layer),
+  Layer.orDie,
+)
 ```
 
-`packages/web/src/server/main.ts` provides `AppServices` once to the merged `App` layer containing `ApiRoutes`, `AuthRoutes`, `PageRoutes(assets.pages)`, and `Health`, alongside assets and middleware. This is the composition boundary: pages and HTTP handlers share service instances and the SQLite connection rather than constructing a store for every request. Browser code crosses the typed HTTP contract instead of importing these server layers.
+`packages/web/src/server/app.ts` provides `AppServices` once to the merged `App(assets)` layer containing `ApiRoutes`, `AuthRoutes`, `PageRoutes(assets.pages)`, and `Health`, alongside assets and middleware. `server/main.ts` loads assets and serves that layer. This is the composition boundary: pages and HTTP handlers share service instances and the SQLite connection rather than constructing a store for every request. Browser code crosses the typed HTTP contract instead of importing these server layers.
 
 ## Persistence and process model
 
-`packages/server/src/Sqlite.ts` opens a shared `node:sqlite` connection, enables WAL for file-backed databases, and closes it on scope release. The default file is `packages/web/data/app.db` when launched through the root scripts.
+`packages/server/src/Sqlite.ts` opens the shared raw `node:sqlite` connection and enables WAL. `DatabasePath.layer` resolves one path for both that connection (`Sqlite.configured`) and a **second scoped connection** (`JobsSql`, the official `@effect/sql-sqlite-node` adapter, pinned to 4.0.5). Both close on scope release. The default file is `packages/web/data/app.db` when launched through the root scripts. Full `AppServices` requires a file-backed `DATABASE_PATH`; `:memory:` is rejected by `JobsSql` because separate connections would not share it. Standalone service tests can still use `Sqlite.memory` without the full app/jobs composition.
 
 - Better Auth owns users, sessions, and accounts. Its migrations run at startup before the server listens.
 - `Garden.ts` creates `garden_state`, restores it into an Effect `Ref`, and persists changes synchronously before updating the live view. Moisture is calculated from the last watering time; the journal retains at most 20 entries.
@@ -64,6 +70,26 @@ export const AppServices = Layer.mergeAll(
 - Missing demo rows are seeded. Malformed stored demo JSON is also reseeded; this is not corruption recovery. Backups matter.
 
 Garden and Kanban survive process restarts; they are **not in-memory-only stores**. Their live `Ref`s are nevertheless process-local: multiple writers/processes would not maintain coherent views. Run one app process against a persistent writable local disk. This is not a per-user or multi-tenant data model. Whole-board Kanban saves have no server-side revision conflict check, so competing devices can overwrite each other.
+
+## Public realtime invalidation
+
+`packages/contract/src/Events.ts` declares `GET /api/events`: `invalidate` has `{ topic }`, `resync` has `{ topics }`, and `heartbeat` has `{}`. Only public `garden`/`kanban` topic names are sent, never complete state, auth/session data, or private payloads. Reads still use the typed HTTP API.
+
+`Events.commit(topic, write)` synchronously wraps the domain write, event insert, and retention trim in a raw SQLite savepoint. The callback must not yield or return an asynchronous write. Domain `Ref`s change only after persistence succeeds. This atomic domain/event boundary does **not** extend to native queue offers on the second connection.
+
+The `public_events` log keeps 1,000 events, reads batches of 100, and polls every 300 ms. IDs combine persisted `event_generation` with the sequence. Missing, malformed, future, foreign-generation, or expired cursors produce a `resync` for both topics rather than a partial history. Heartbeats arrive approximately every 15 seconds when idle; connections retire after 120 seconds. Native EventSource reconnect sends `Last-Event-ID`; a new source without a cursor gets a resync. This is a bounded replay/invalidation mechanism, not a permanent event archive.
+
+`client/Realtime.ts` reference-counts one EventSource per document. Topic watchers feed existing XState freshness and AtomHttpApi refresh paths, preserving local pending-edit guards. Events notify only that document, not the cross-tab mutation channel, avoiding echo/refetch loops. A reopened SSE connection also revalidates subscribed topics so pending local writes resume even when the server has no missed events to replay. If a service-worker network failure permanently closes EventSource, the client retries with a fresh connection after three seconds; teardown cancels that retry. Invalidated reads use `x-playground-network-only` and `cache: no-store`; the service worker never caches SSE and will not acknowledge a stale cached response as a successful resync. While offline, ordinary snapshot reads and pending-edit synchronization remain best-effort; reconnect refetches current state, not missed private/full-state events. Focus/online/local freshness still works if EventSource is unavailable.
+
+Responses set `Cache-Control: no-store, no-transform`, `Content-Encoding: identity`, and `X-Accel-Buffering: no`. The proxy must also disable streaming buffering/compression and permit the connection lifetime; see [deployment](deployment.md#sse-through-the-http-proxy). These changes do not make process-local domain stores multi-instance safe or provide conflict-free collaboration.
+
+## Durable background jobs
+
+`Jobs.ts` exports `Jobs`, `JobsStore`, `JobsSql`, `PersistedQueue`, and `runWorker`. `Jobs` combines the native Effect queue factory, SQL store (`durable_jobs`), and cleanup. No Redis/external broker or admin queue UI is introduced. Effect persistence APIs are unstable: review the pinned implementation and schema migrations when upgrading.
+
+Delivery is **at-least-once**: a crash after a side effect but before acknowledgement can repeat it. Handlers must tolerate duplicates; a stable offer ID is enqueue deduplication, not an exactly-once side-effect guarantee. Duplicate IDs are ignored within a named queue while their rows remain. Cleanup runs every minute, retaining completed rows for one day and failed rows for seven days; IDs may be reused after removal. SQL delayed offers postpone initial visibility, rounded up to whole seconds; retries use the queue's retry schedule.
+
+`JobsStore` polls at 300 ms, refreshes locks every 10 seconds, and expires leases after 60 seconds. `runWorker` forks one sequential scoped worker, bounds each attempt to 20 seconds, sanitizes failures, and pauses 100 ms between takes. Queue schemas, retry limits, deadlines, and side-effect idempotency remain feature responsibilities. Register the shared factory once and feature workers once under `AppServices`, not in request handlers; see the [extension recipe](development.md#add-a-durable-feature-job). Native queue support is not a multi-instance guarantee for this application.
 
 ## Authentication and trust boundaries
 
@@ -73,7 +99,7 @@ Better Auth serves `/api/auth/*`, with password auth, optional Google/Microsoft,
 
 Better Auth applies origin checks to its endpoints. Admin API writes and `/logout` also use `Auth.isSameOrigin`. Login's `next` destination is restricted to a same-origin path. The **public Garden and Kanban groups do not use the admin authentication middleware**; treat all demo content as shared and publicly writable.
 
-`Mailer.layer` selects log, SMTP, or disabled delivery. SMTP support does not implement password reset or email verification. See [mail configuration](deployment.md#email-and-smtp) for delivery limits.
+`Mailer.layer` selects log, SMTP, or disabled delivery. Auth uses `MailQueue.enqueue`; success means the job is durably queued, not SMTP acceptance or inbox delivery. Token creation and queue offer are not atomic. `MailQueue.layer` starts the `auth-mail` worker with at most five attempts and exponential retries starting at two seconds. Its 240-second job deadline sits inside the 300-second magic-link TTL; each send is bounded by the remaining deadline and the worker's 20-second timeout. Each SMTP attempt owns a TCP socket through Nodemailer's public `getSocket` option; Effect finalization destroys it and waits for closure on success, failure, timeout, or interruption before retry/shutdown proceeds. Nodemailer still handles implicit TLS/STARTTLS, certificate verification/SNI, authentication, and message formatting. Cancellation cannot unsend DATA already accepted by the receiver, so delivery remains ambiguous and duplicates remain possible. A stable message ID helps correlation but does not guarantee provider deduplication. Terminal payloads are scrubbed after attempts, at startup, and every second; expired unclaimed pending mail is deleted. Failed scrubbed auth jobs cannot be replayed: request a fresh link. Pending secrets can remain in the DB/WAL/backups, and scrubbing is not secure erase. SMTP support does not implement password reset or email verification. See [mail configuration](deployment.md#email-and-smtp) for delivery limits.
 
 ## Hydration and state
 

@@ -4,7 +4,7 @@
 
 Follow [AGENTS.md](../AGENTS.md) for naming and stack conventions. Paths in this guide are relative to the repository root. Start from a nearby implementation rather than introducing a second routing, fetching, or styling system.
 
-Code blocks below are excerpts labeled with their source paths, not standalone modules. Surrounding imports, helpers, types, and omitted implementation remain in the source; comments mark gaps where needed.
+Unless explicitly labeled as a new feature example, code blocks below are excerpts labeled with their source paths, not standalone modules. Surrounding imports, helpers, types, and omitted implementation remain in the source; comments mark gaps where needed.
 
 ## Add a server-rendered route
 
@@ -84,7 +84,8 @@ Done when the initial HTML matches hydration, controls remain inert until ready,
 3. In the same module, export the group's `HttpApiBuilder.group(AppApi, ...)` handlers, mapping each endpoint to the service, as `GardenHandlers` does. Validate at the shared contract boundary, not only in UI controls.
 4. In `packages/server/src/index.ts`, export the service, add its layer to `AppServices`, and add its handlers to `ApiRoutes`. The web server provides `AppServices` once, so pages, API handlers, and health checks share the instance; `packages/web/src/server/main.ts` does not change. A forgotten layer or handler group fails typechecking at `ApiRoutes` and names it, such as `Kanban` or `Service<"app", "kanban">`.
 5. Browser code imports the contract and `ApiClient`, never server implementation modules. Expected failures should remain typed. The shared client retries transient `GET`/`HEAD` failures, not mutations.
-6. For persistent schema changes, implement and document an explicit migration strategy and recovery plan. Current demo services create missing tables; they are not a general schema migration framework.
+6. For public realtime changes, follow the topic/commit registration below; do not emit private data through the public stream. A service using `Events` must provide `Events.layer` (as Garden and Kanban do) or receive it through an explicit layer dependency. Keep the shared `Events.layer` in `AppServices` and `EventsHandlers` in `ApiRoutes`; sibling `Layer.mergeAll` outputs do not automatically satisfy sibling inputs.
+7. For persistent schema changes, implement and document an explicit migration strategy and recovery plan. Current demo services create missing tables; they are not a general schema migration framework.
 
 ### Follow a contract through to the browser
 
@@ -149,6 +150,7 @@ AsyncResult.match(garden, {
 ```ts
 // Inside Garden.layer = Layer.effect(Garden, Effect.gen(function* () { ... })):
 const database = yield * Sqlite
+const events = yield * Events
 database.exec(`
   CREATE TABLE IF NOT EXISTS garden_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -164,14 +166,88 @@ database.exec(`
 const store = yield * Ref.make<GardenStore>(loadInitial(yield * Clock.currentTimeMillis))
 // Inside reset, after obtaining now:
 const next = initial(now)
-persist(next)
+events.commit("garden", () => persist(next))
 yield * Ref.set(store, next)
 return view(next, now)
 ```
 
-`persist` synchronously runs the SQLite upsert. Reset persists before replacing the `Ref` and returning a view; settings and watering likewise persist inside their `Ref.modify` callbacks before returning the new state. Keep this ordering when adding operations rather than updating the visible state first.
+`persist` synchronously runs the SQLite upsert. `events.commit` adds the public invalidation in the same synchronous savepoint; never put an Effect yield, promise, or native queue offer inside that callback. Reset commits before replacing the `Ref`; settings and watering likewise commit inside `Ref.modify`. `Garden.layer` ends with `.pipe(Layer.provide(Events.layer))`, satisfying that dependency while reusing the same layer identity in the app composition. Keep this ordering rather than updating visible state first.
 
 Done when invalid inputs are rejected by the contract, declared errors reach callers correctly, and state survives a restart when persistence is required. Extend `packages/server/src/services.test.ts` where appropriate.
+
+## Extend public invalidation
+
+For a new **public** topic, extend `EventTopic` in `packages/contract/src/Events.ts`, the `public_events` topic constraint with an explicit migration, and the resync fallback topic list in server `Events.ts`. Add the topic to `Realtime.ts`'s revision map and its API pathname mapping. Do not only change the TypeScript union: existing databases retain the old SQL constraint.
+
+Use `events.commit(topic, () => synchronousDomainWrite())` before changing a process-local view. Register your service/handlers in `AppServices`/`ApiRoutes` as above. Add the feature's mutation event/topic pair to `freshnessTopics` in `machines/offlineSync.ts`, then use `createFreshnessChannel(eventName).watch(refresh)` for its existing freshness callback (see the Garden/Kanban offline modules); AtomHttpApi consumers can use `watchRealtime(topic, refresh)` directly, or wrap atom refresh functions in the feature's freshness watcher as `LiveStatusIsland.tsx` does. Return the unsubscribe function on teardown. Do not publish an SSE receipt to BroadcastChannel or enqueue a mutation in response to it. Keep dirty local edits protected and let invalidation trigger a typed read, not a state replacement from the event.
+
+Verify two documents, reconnect within/beyond retention, an offline invalidated read, and pending local edits. The stream must contain only public topic names; private features need a separately authorized design.
+
+## Add a durable feature job
+
+Use the exported native queue factory, not a new scheduler or database connection. This minimal module demonstrates a schema-typed audit job with a real bounded logging handler; replace the handler with your feature's duplicate-safe work, and avoid logging secrets.
+
+```ts
+// packages/server/src/AuditJobs.ts (new feature example)
+import { Context, Effect, Layer, Schedule, Schema } from "effect"
+import { PersistedQueue, runWorker } from "./Jobs.ts"
+
+export const AuditJob = Schema.Struct({ recordId: Schema.String })
+
+export class AuditJobs extends Context.Service<
+  AuditJobs,
+  PersistedQueue.PersistedQueue<typeof AuditJob.Type>
+>()("feature/AuditJobs") {
+  static readonly layer = Layer.effect(
+    AuditJobs,
+    Effect.gen(function* () {
+      const queue = yield* PersistedQueue.make({
+        name: "audit-record",
+        schema: AuditJob,
+        maxAttempts: 5,
+        retrySchedule: Schedule.exponential("2 seconds"),
+      })
+      yield* runWorker(queue, (job) =>
+        Effect.logInfo("Audit record processed").pipe(
+          Effect.annotateLogs({ recordId: job.recordId }),
+        ),
+      )
+      return queue
+    }),
+  )
+}
+```
+
+Export `AuditJobs` from `packages/server/src/index.ts` and add its layer to the existing `AppServices` merge as below. Keep the existing common `Layer.provide(Jobs)` so all queue consumers use the **same shared `Jobs` once**. `AuditJobs.layer` creates its queue and starts its worker exactly once in the app scope, not per route/request. Workers are interrupted before their backing connections close.
+
+```ts
+// packages/server/src/index.ts; imports include AuditJobs from ./AuditJobs.ts
+export const AppServices = Layer.mergeAll(
+  Events.layer,
+  Garden.layer,
+  Kanban.layer,
+  AuditJobs.layer,
+  Auth.layer.pipe(Layer.provide(MailQueue.layer), Layer.provide(Mailer.layer)),
+).pipe(
+  Layer.provide(Jobs),
+  Layer.provide(Sqlite.configured),
+  Layer.provide(DatabasePath.layer),
+  Layer.orDie,
+)
+```
+
+Inside a caller's `Effect.gen`, acquire the service and offer work (`recordId` is the caller's durable business identifier):
+
+```ts
+const audit = yield * AuditJobs
+yield * audit.offer({ recordId }, { id: `audit:${recordId}:v1`, delay: "10 seconds" })
+```
+
+Choose IDs from durable business identity plus operation/version, not a new random UUID for every retry of the same logical offer. Duplicate IDs within this queue are ignored, including a changed payload/delay, while the row remains. Cleanup runs every minute with one-day completed and seven-day failed retention; deduplication ends when the row is removed. SQL rounds the initial delay up to whole seconds; it does not consume an attempt, and retries follow `retrySchedule`.
+
+`runWorker` is sequential, scoped, and limited to 20 seconds per attempt; the store polls every 300 ms with 10-second lock refresh and a 60-second lease. Set explicit feature retry/deadline policy and keep work bounded. Effect timeout interrupts the handler; external work must release its resources on interruption. `Mailer.send` demonstrates per-attempt ownership using Nodemailer's supported `getSocket` hook and a socket-destroy/close finalizer; a bare uncancellable promise does not stop I/O. Claims consume attempts even on process crash, and undecodable payloads fail terminally. Design side effects for at-least-once redelivery, including a crash after success before acknowledgement. A stable queue ID is not downstream idempotency.
+
+Offers use the native SQL connection, **not** the raw domain/auth savepoint. Do not claim atomic domain-write-plus-enqueue, and do not nest a queue offer inside `Events.commit`. If an atomic business handoff is required, design and test an explicit transactional outbox/reconciliation boundary before exposing it. Full app/jobs tests need a disposable file-backed `DATABASE_PATH`; standalone domain tests may still use `Sqlite.memory` and `Events.layer`. Validate delayed delivery, duplicate offers, restart/lease recovery, retry exhaustion, and shutdown; inspect only safe queue metadata as described in [operations](deployment.md#durable-job-operations).
 
 ## Add a protected admin panel
 

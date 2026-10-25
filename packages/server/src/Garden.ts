@@ -8,6 +8,7 @@ import {
 } from "@playground/contract"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
+import { Events } from "./Events.ts"
 import { Sqlite } from "./Sqlite.ts"
 
 const JOURNAL_LIMIT = 20
@@ -72,6 +73,7 @@ export class Garden extends Context.Service<
     Garden,
     Effect.gen(function* () {
       const database = yield* Sqlite
+      const events = yield* Events
       database.exec(`
         CREATE TABLE IF NOT EXISTS garden_state (
           id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -170,7 +172,7 @@ export class Garden extends Context.Service<
               "Gave the garden a gentle drink.",
               now,
             )
-            persist(next)
+            events.commit("garden", () => persist(next))
             return [view(next, now), next]
           },
         )
@@ -191,7 +193,7 @@ export class Garden extends Context.Service<
               now,
             )
           }
-          persist(next)
+          events.commit("garden", () => persist(next))
           return [view(next, now), next] as const
         })
       })
@@ -199,14 +201,14 @@ export class Garden extends Context.Service<
       const reset = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         const next = initial(now)
-        persist(next)
+        events.commit("garden", () => persist(next))
         yield* Ref.set(store, next)
         return view(next, now)
       }).pipe(Effect.withSpan("Garden.reset"))
 
       return Garden.of({ get, water, updateSettings, reset })
     }),
-  )
+  ).pipe(Layer.provide(Events.layer))
 }
 
 export const GardenHandlers = HttpApiBuilder.group(
