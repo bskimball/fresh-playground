@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs"
 import babel from "@rolldown/plugin-babel"
 import stylex from "@stylexjs/unplugin"
 import react, { reactCompilerPreset } from "@vitejs/plugin-react"
+import { Features } from "lightningcss"
 import { defineConfig, lazyPlugins } from "vite-plus"
 import { effectDevServer } from "./src/server/devServer.ts"
 
@@ -17,7 +18,9 @@ export default defineConfig({
   plugins:
     lazyPlugins(() => [
       react(),
-      stylex.vite(),
+      // Keep `light-dark()` native: the polyfill depends on variables set beside every
+      // `color-scheme` rule, which dev-served global.css never gets, so borders split.
+      stylex.vite({ lightningcssOptions: { exclude: Features.LightDark } }),
       babel({ presets: [reactCompilerPreset()] }),
       effectDevServer(),
     ]) ?? [],

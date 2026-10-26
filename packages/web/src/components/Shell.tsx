@@ -23,7 +23,7 @@ export function Shell({
   viewer?: Viewer | undefined
   children?: ReactNode
 }) {
-  const nav = navLinks(viewer?.isAdmin ?? false)
+  const nav = navLinks(viewer)
   return (
     <>
       <header {...stylex.props(styles.header)}>
@@ -231,7 +231,11 @@ const styles = stylex.create({
     alignItems: "center",
     order: { default: 0, [media.mobile]: 1 },
     width: { default: "auto", [media.mobile]: "100%" },
-    justifyContent: "center",
+    // Mobile links grow to fill the row; start-aligned overflow keeps the first link reachable.
+    justifyContent: { default: "center", [media.mobile]: "flex-start" },
+    // Signed-in admins see more links than a phone row fits; scroll rather than overflow the page.
+    overflowX: { default: "visible", [media.mobile]: "auto" },
+    scrollbarWidth: "none",
     gap: { default: 4, [media.mobile]: 2 },
     backgroundColor: colors.surfaceSubtle,
     borderWidth: 1,
@@ -282,7 +286,7 @@ const styles = stylex.create({
     gap: 7,
   },
   navIcon: {
-    display: "inline-flex",
+    display: { default: "inline-flex", [media.mobile]: "none" },
     alignItems: "center",
     color: colors.sage,
   },

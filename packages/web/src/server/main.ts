@@ -4,7 +4,7 @@ import { Effect, Layer, Logger, References } from "effect"
 import { HttpRouter } from "effect/http"
 import { App } from "./app.ts"
 import { loadAssets } from "./assets.ts"
-import { requestLogging, serverConfig } from "./runtime.ts"
+import { requestLogging, serverConfig, Telemetry } from "./runtime.ts"
 
 Effect.gen(function* () {
   const config = yield* serverConfig
@@ -16,7 +16,9 @@ Effect.gen(function* () {
       Layer.launch,
     )
   })
+  // Inside the logger layer, so the OTLP logger joins the console logger.
   yield* server.pipe(
+    Effect.provide(Telemetry),
     Effect.provide(Logger.layer([logger])),
     Effect.provideService(References.MinimumLogLevel, config.logLevel),
   )

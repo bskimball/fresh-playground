@@ -22,6 +22,8 @@ The host needs Node.js 24.21.0, installed dependencies, and the build output. Ke
    | `HOST`               | `127.0.0.1` for a same-host proxy; `0.0.0.0` only where the network intentionally restricts access to the proxy                           |
    | `PORT`               | Internal listener port, default `4321`                                                                                                    |
    | `DATABASE_PATH`      | Absolute persistent file path selected above                                                                                              |
+   | `STORAGE_PATH`       | Absolute persistent directory for uploads, next to the database; or `STORAGE_DRIVER=s3` as in [file storage](#file-storage)               |
+   | `TRUST_PROXY`        | `true` behind exactly one reverse proxy that appends `X-Forwarded-For`; otherwise every client shares the proxy's rate limits             |
    | `AUTH_PASSWORD`      | `true` unless using another configured sign-in method                                                                                     |
    | `AUTH_MAGIC_LINK`    | `false` unless SMTP is configured and you explicitly enable it                                                                            |
    | `MAIL_TRANSPORT`     | `disabled` for no email, or `smtp` as below                                                                                               |
@@ -53,11 +55,34 @@ curl --fail --silent --show-error https://app.example.com/health/ready
 
 These checks do not establish successful login, mail delivery, or restart persistence; complete step 7 separately.
 
+## Run with Docker
+
+The root `Dockerfile` builds the same production server into a Node 24.21.0 image. It runs as the unprivileged `node` user, listens on `0.0.0.0:4321`, and keeps `DATABASE_PATH=/data/app.db` and `STORAGE_PATH=/data/uploads` on the `/data` volume. A health check polls `/health/ready`.
+
+```sh
+docker build -t fresh-playground .
+docker run -d --name app -p 127.0.0.1:4321:4321 -v fresh-data:/data \
+  -e BETTER_AUTH_URL=https://app.example.com \
+  -e BETTER_AUTH_SECRET="$(openssl rand -base64 32)" \
+  -e TRUST_PROXY=true \
+  fresh-playground
+```
+
+The one-process rule still applies: run one container per volume, never replicas sharing it. Store the secret in your secret manager rather than regenerating it per run, since a new secret signs everyone out. The CI `docker` job builds the image and checks startup; it does not test your proxy or volume backups. Stop the container before copying the volume, as in the [backup steps](#back-up-and-restore-sqlite-safely).
+
 ## SSE through the HTTP proxy
 
 `GET /api/events` is a public invalidation stream, not a private/full-state feed. Disable proxy buffering, response caching, and compression/transformation for this path. The app sends `Cache-Control: no-store, no-transform`, `Content-Encoding: identity`, and `X-Accel-Buffering: no`; ensure your proxy/CDN actually honors the streaming policy. Permit a response lifetime longer than 120 seconds and an idle read timeout comfortably above the approximately 15-second heartbeat interval. The server intentionally retires connections after 120 seconds; native EventSource reconnect is expected, not a reason to restart the app.
 
 Test through the actual HTTPS proxy with `curl -N https://app.example.com/api/events` (replace the origin); expect an initial `resync` and continuing heartbeats without buffered bursts. `Last-Event-ID` enables replay within 1,000 retained events; invalid/expired/foreign cursors resync public topics. Reconnect after downtime refetches current state. SSE does not change the single-process limit, offline-write ambiguity, or last-write-wins conflicts.
+
+## File storage
+
+With the default `STORAGE_DRIVER=local`, uploaded bytes live under `STORAGE_PATH` and their metadata in the database. Treat the directory as part of the database: same disk, same permissions, same backups. A database restored without its matching uploads lists files that download as 404; uploads without the database are unreachable.
+
+For S3-compatible storage, set `STORAGE_DRIVER=s3`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`, plus `S3_REGION` (default `us-east-1`) and `S3_ENDPOINT` for anything other than AWS. Requests are path-style (`<endpoint>/<bucket>/<key>`). The credentials need only `GetObject`, `PutObject`, and `DeleteObject` on that bucket. Keep the bucket private; the app streams downloads itself after checking ownership. Bucket versioning or provider backups cover the objects, but restoring the database to an older snapshot can still reference deleted objects. S3 support was exercised against the moto S3 emulator, which does not strictly validate signatures, not against a live provider; verify with your provider before relying on it.
+
+Limits are 10 MB per file and 100 MB per user (`FILE_MAX_BYTES` and `FILE_QUOTA_BYTES` in `packages/contract/src/Files.ts`). Allow request bodies of at least 10 MB at the proxy.
 
 ## Email and SMTP
 
@@ -103,7 +128,7 @@ Auth terminal payloads are scrubbed to `{}` and failed metadata is sanitized. **
 The database uses WAL mode: copying only a live `app.db` can omit committed changes in `app.db-wal`. Use a stopped-process backup for this template:
 
 1. Block new traffic and stop the single app process cleanly, including scoped mail/feature workers and SSE streams; confirm both SQLite connections and any inspection tools are closed. Do not copy while a worker can claim, acknowledge, or scrub jobs.
-2. Copy the database **and any existing matching `-wal` and `-shm` sidecars as one stopped snapshot** to a protected backup location. Clean shutdown may remove/checkpoint sidecars; do not assume that it did. Keep the matching app revision, lockfile, and required secret/configuration securely available for recovery. Avoid including unrelated secrets in an ordinary code archive.
+2. Copy the database **and any existing matching `-wal` and `-shm` sidecars as one stopped snapshot** to a protected backup location, together with the local `STORAGE_PATH` directory when using local file storage. Clean shutdown may remove/checkpoint sidecars; do not assume that it did. Keep the matching app revision, lockfile, and required secret/configuration securely available for recovery. Avoid including unrelated secrets in an ordinary code archive.
 3. Restart and check readiness plus queue metadata/worker behavior. Periodically rehearse restoration into an isolated location with disposable configuration; confirm accounts, application state, event generation/replay, and pending/completed/failed queues. Choose backup frequency and retention based on acceptable data loss.
 
 Example POSIX shell copy for step 2, **only after traffic is blocked and all database users are stopped**. Replace both placeholder paths; `backup` must be a new snapshot directory under a protected existing parent. Stopping/restarting is deliberately not scripted because it depends on your process supervisor.
@@ -133,4 +158,6 @@ Before an upgrade, take a stopped backup, retain the old build/source and lockfi
 
 ## Logs and monitoring
 
-Supervise restarts and retain production JSON logs appropriately. `x-request-id` correlates responses with request logs; unexpected 5xx bodies are sanitized. Logs omit request query strings, headers, and bodies but application-authored messages may contain sensitive data. Health readiness reads Garden, not SMTP or every table. Web vitals go to the local logger via `/api/performance`; there is no hosted monitoring backend or alert configuration.
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` (and `OTEL_EXPORTER_OTLP_HEADERS` for vendor credentials) to export traces, metrics, and logs as OTLP/HTTP JSON to a collector or vendor; see [operations](architecture.md#operations). JSON console logs continue either way. Exported spans and logs carry request paths and application messages, so apply the same data handling as for logs.
+
+Supervise restarts and retain production JSON logs appropriately. `x-request-id` correlates responses with request logs; unexpected 5xx bodies are sanitized. Logs omit request query strings, headers, and bodies but application-authored messages may contain sensitive data. Health readiness reads Garden, not SMTP or every table. Web vitals go to the local logger via `/api/performance`. No monitoring backend or alerting is included; 429 responses in the logs indicate clients hitting [rate limits](architecture.md#authentication-and-trust-boundaries).

@@ -16,7 +16,8 @@ packages/web server ◄────────┘
 Effect HttpRouter + React server rendering + built assets
        │
        ▼
-raw Sqlite (domain/auth/events) + native JobsSql → same persistent app.db (WAL)
+raw Sqlite (domain/auth/events/file metadata) + native JobsSql → same persistent app.db (WAL)
+Storage (uploaded file bytes) → STORAGE_PATH directory or an S3-compatible bucket
 ```
 
 ```text
@@ -49,6 +50,8 @@ export const AppServices = Layer.mergeAll(
   Events.layer,
   Garden.layer,
   Kanban.layer,
+  Files.layer.pipe(Layer.provide(Storage.layer)),
+  RateLimits,
   Auth.layer.pipe(Layer.provide(MailQueue.layer), Layer.provide(Mailer.layer)),
 ).pipe(
   Layer.provide(Jobs),
@@ -67,7 +70,20 @@ export const AppServices = Layer.mergeAll(
 - Better Auth owns users, sessions, and accounts. Its migrations run at startup before the server listens.
 - `Garden.ts` creates `garden_state`, restores it into an Effect `Ref`, and persists changes synchronously before updating the live view. Moisture is calculated from the last watering time; the journal retains at most 20 entries.
 - `Kanban.ts` creates `kanban_state`, restores the board into a `Ref`, and persists whole-board replacements with a server timestamp.
+- `Files.ts` creates `files` (owner, name, media type, size) and keeps the bytes in `Storage`; see [uploaded files](#uploaded-files).
 - Missing demo rows are seeded. Malformed stored demo JSON is also reseeded; this is not corruption recovery. Backups matter.
+
+### Replace the database layer
+
+The database is deliberately not abstracted behind an ORM. To move to Drizzle, Kysely, or another server such as Postgres, change these SQLite-specific touchpoints together:
+
+- `Sqlite.ts`: the shared `node:sqlite` connection and `Sqlite.migrate`. Provide your client as its own `Context.Service` layer under `AppServices` and port each service's migrations.
+- `Garden.ts`, `Kanban.ts`, `Files.ts`: prepared statements. Their service interfaces can stay as they are, so handlers and pages do not change.
+- `Events.ts`: savepoints, `sqlite_sequence`, and `sqlite_master`. `Events.commit` must remain one synchronous transaction around the domain write and event insert, or be redesigned.
+- `Auth.ts`: Better Auth receives the `DatabaseSync`. Pass it your database or adapter instead; its migrations still run at startup.
+- `Jobs.ts`: `PersistedQueue.layerStoreSql` accepts any Effect `SqlClient`, so replace `JobsSql` with the matching `@effect/sql-*` client.
+
+The single-process limits below come from the process-local `Ref`s and in-memory rate limits, not from SQLite; a server database alone does not make multiple replicas safe.
 
 Garden and Kanban survive process restarts; they are **not in-memory-only stores**. Their live `Ref`s are nevertheless process-local: multiple writers/processes would not maintain coherent views. Run one app process against a persistent writable local disk. This is not a per-user or multi-tenant data model. Whole-board Kanban saves have no server-side revision conflict check, so competing devices can overwrite each other.
 
@@ -91,13 +107,25 @@ Delivery is **at-least-once**: a crash after a side effect but before acknowledg
 
 `JobsStore` polls at 300 ms, refreshes locks every 10 seconds, and expires leases after 60 seconds. `runWorker` forks one sequential scoped worker, bounds each attempt to 20 seconds, sanitizes failures, and pauses 100 ms between takes. Queue schemas, retry limits, deadlines, and side-effect idempotency remain feature responsibilities. Register the shared factory once and feature workers once under `AppServices`, not in request handlers; see the [extension recipe](development.md#add-a-durable-feature-job). Native queue support is not a multi-instance guarantee for this application.
 
+## Uploaded files
+
+`packages/contract/src/Files.ts` declares `FilesApi` under `/api/files`, behind `Authentication`: list, multipart upload, and delete, each scoped to `CurrentUser`. Downloads are a plain route, `GET /api/files/:id` in server `Files.ts`, so the body streams with its own headers; it checks the session too and returns 404 for another user's file.
+
+Uploads are parsed by Effect's buffered multipart support (one part, at most 10 MB), written to a request-scoped temp file, then copied into `Storage` under a random UUID before the metadata row is inserted. The quota check and insert run synchronously on the shared connection, so concurrent uploads cannot exceed the 100 MB per-user quota; a rejected upload's stored bytes are deleted. Names keep only their base name without control characters; media types are reduced to `type/subtype` or `application/octet-stream`. Deleting removes the row first; a failed object delete is logged and leaves an orphaned object, not a broken row.
+
+PNG, JPEG, GIF, WebP, and AVIF are served inline; everything else is an attachment with `application/octet-stream`. Every download carries `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, so uploaded HTML or SVG never runs on the app's origin.
+
+`Storage.ts` selects `STORAGE_DRIVER=local` (files under `STORAGE_PATH`) or `s3` (path-style requests signed by `aws4fetch`, for AWS, MinIO, R2, and similar). Features can reuse `Storage` for their own objects with app-generated keys. Deleting a user through the admin panel does not delete their files; add that cleanup if you need it. The `/files` page is listed for signed-in users and is never cached offline.
+
 ## Authentication and trust boundaries
 
 Better Auth serves `/api/auth/*`, with password auth, optional Google/Microsoft, and optional emailed magic links. The first account created while no admin exists is promoted by an atomic SQL statement. Establish the owner's admin account before exposing a fresh instance.
 
 `Authentication` middleware supplies `CurrentUser` or returns 401; admin handlers separately check permissions and return 403 when absent. `Access.ts` is the role/permission source. The panel registry filters navigation, but is not the API's authorization boundary. Admin self-ban, self-demotion, and self-deletion are blocked.
 
-Better Auth applies origin checks to its endpoints. Admin API writes and `/logout` also use `Auth.isSameOrigin`. Login's `next` destination is restricted to a same-origin path. The **public Garden and Kanban groups do not use the admin authentication middleware**; treat all demo content as shared and publicly writable.
+`RateLimitMiddleware` limits each client to 600 `/api/*` reads, 120 writes, and 30 `/api/events` connections per minute, answering 429 with `Retry-After`. It uses Effect's `RateLimiter` with an in-memory store: counts are process-local and reset on restart. IPv6 clients are keyed by /64. Better Auth applies its own limits to `/api/auth/*`; `AuthRoutes` passes it the same resolved client address in `x-playground-client-ip`, overwriting any client-sent value. The address is the socket peer, or with `TRUST_PROXY=true` the last `X-Forwarded-For` entry, so behind a proxy that setting decides whether clients are limited separately.
+
+Better Auth applies origin checks to its endpoints. Admin and files API writes and `/logout` also use `Auth.isSameOrigin`. Login's `next` destination is restricted to a same-origin path. The **public Garden and Kanban groups do not use the admin authentication middleware**; treat all demo content as shared and publicly writable.
 
 `Mailer.layer` selects log, SMTP, or disabled delivery. Auth uses `MailQueue.enqueue`; success means the job is durably queued, not SMTP acceptance or inbox delivery. Token creation and queue offer are not atomic. `MailQueue.layer` starts the `auth-mail` worker with at most five attempts and exponential retries starting at two seconds. Its 240-second job deadline sits inside the 300-second magic-link TTL; each send is bounded by the remaining deadline and the worker's 20-second timeout. Each SMTP attempt owns a TCP socket through Nodemailer's public `getSocket` option; Effect finalization destroys it and waits for closure on success, failure, timeout, or interruption before retry/shutdown proceeds. Nodemailer still handles implicit TLS/STARTTLS, certificate verification/SNI, authentication, and message formatting. Cancellation cannot unsend DATA already accepted by the receiver, so delivery remains ambiguous and duplicates remain possible. A stable message ID helps correlation but does not guarantee provider deduplication. Terminal payloads are scrubbed after attempts, at startup, and every second; expired unclaimed pending mail is deleted. Failed scrubbed auth jobs cannot be replayed: request a fresh link. Pending secrets can remain in the DB/WAL/backups, and scrubbing is not secure erase. SMTP support does not implement password reset or email verification. See [mail configuration](deployment.md#email-and-smtp) for delivery limits.
 
@@ -128,4 +156,6 @@ When customizing routes or branding, update the section metadata and the worker'
 
 Production logging is JSON; other environments use pretty logs. Requests get `x-request-id` and logs of method, path without query, status, and duration. Unexpected 5xx bodies are sanitized with a request ID. Log transport mail intentionally includes sensitive links outside production; application-authored messages and URL paths can still expose sensitive data.
 
-The common browser entry lazy-loads `web-vitals` and sends metrics to `/api/performance`, which validates and logs them locally. No hosted telemetry backend is configured. `NodeRuntime` handles process shutdown; supervise the process and manage log retention in your deployment environment.
+The common browser entry lazy-loads `web-vitals` and sends metrics to `/api/performance`, which validates and logs them locally.
+
+With `OTEL_EXPORTER_OTLP_ENDPOINT` set, `Telemetry` in `server/runtime.ts` exports traces, metrics, and logs as OTLP/HTTP JSON from `main.ts` (the production server, not `vp dev`). Traces include Effect's HTTP server spans, the jobs connection's SQL spans, and named `Effect.fn` spans such as `Kanban.save` and `Files.upload`. `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_SERVICE_NAME` are honored, and `OTEL_SDK_DISABLED=true` turns export off. No collector or backend is included. `NodeRuntime` handles process shutdown; supervise the process and manage log retention in your deployment environment.

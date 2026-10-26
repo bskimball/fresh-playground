@@ -5,7 +5,7 @@ interface SectionInfo {
   readonly label: string
   readonly icon: IconName
   /** Who sees the section in the main navigation; omit to leave it out. */
-  readonly nav?: "everyone" | "admins"
+  readonly nav?: "everyone" | "members" | "admins"
   /**
    * Served network-first with a cached fallback by the service worker.
    * Cached HTML outlives the session, so never set this on private pages.
@@ -19,6 +19,7 @@ export const sections = {
   kanban: { href: "/kanban", label: "Kanban", icon: "board", nav: "everyone", offline: true },
   journal: { href: "/journal", label: "Journal", icon: "book", nav: "everyone", offline: true },
   about: { href: "/about", label: "About", icon: "compass", nav: "everyone", offline: true },
+  files: { href: "/files", label: "Files", icon: "folder", nav: "members" },
   admin: { href: "/admin", label: "Admin", icon: "shield", nav: "admins" },
   login: { href: "/login", label: "Sign in", icon: "user" },
 } as const satisfies Record<string, SectionInfo>
@@ -48,7 +49,13 @@ const links: ReadonlyArray<SectionLink> = Object.entries(sections).map(([section
 
 export const publicLinks = links.filter((link) => link.nav === "everyone")
 
-export const navLinks = (isAdmin: boolean) =>
-  links.filter((link) => link.nav === "everyone" || (isAdmin && link.nav === "admins"))
+/** Links for the current viewer: members are signed in; admins hold an admin panel permission. */
+export const navLinks = (viewer: { readonly isAdmin: boolean } | undefined) =>
+  links.filter(
+    (link) =>
+      link.nav === "everyone" ||
+      (viewer !== undefined && link.nav === "members") ||
+      (viewer?.isAdmin === true && link.nav === "admins"),
+  )
 
 export const offlinePaths = links.filter((link) => link.offline).map((link) => link.href)

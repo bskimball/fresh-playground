@@ -317,6 +317,44 @@ resetGarden: () =>
 
 Done when an authorized user can use the panel, an anonymous API request gets 401, an insufficient role gets 403, and existing self-lockout protections remain intact. Better Auth user-management calls continue to receive the caller's headers and enforce their own permissions too.
 
+## Store files for a feature
+
+The Files feature (`packages/contract/src/Files.ts`, `packages/server/src/Files.ts`, `packages/web/src/features/files/`) is the worked example: a multipart endpoint behind `Authentication`, metadata rows owned by a user, and bytes in `Storage`. For another feature's attachments, reuse `Storage` rather than writing to disk directly:
+
+1. Declare the upload payload with `HttpApiSchema.asMultipart({ maxParts, maxFileSize })` around a struct using `Multipart.SingleFileSchema` (or `FilesSchema`). The parser enforces the limits and answers 413 before your handler runs.
+2. In the service, generate the key yourself (a UUID), `storage.put(key, { path, contentType })` from the persisted temp file, then insert your row. If the insert can be refused, as the quota is, remove the object afterwards. Never derive keys or paths from client-supplied names; `Storage` rejects keys outside `[A-Za-z0-9-]`.
+3. Serve bytes from a route that checks ownership, like `FileRoutes`, keeping `nosniff`, the sandbox CSP, and `attachment` for anything that is not a known image type.
+
+In the browser, multipart endpoints take a `FormData` payload. An atom seeded from server props with `seedAtom` has not run its query, so refresh it after a mutation, as `FilesIsland.tsx` does, rather than relying on `reactivityKeys` alone.
+
+## Render Markdown content
+
+For help, legal, or other prose pages, import the Markdown source as a string and render it with Astryx's `Markdown` component. Vite's `?raw` import bundles the file at build time; nothing is fetched or parsed from disk at request time, and no extra dependency is needed. A new feature example:
+
+```tsx
+// packages/web/src/features/legal/routes.tsx, with privacy.md beside it
+import { Markdown } from "@astryxdesign/core/Markdown"
+import { Effect } from "effect"
+import { HttpRouter } from "effect/http"
+import { Page } from "../../server/Page.ts"
+import privacy from "./privacy.md?raw"
+
+export const LegalPages = HttpRouter.use(
+  Effect.fn(function* (router) {
+    const page = yield* Page
+    yield* router.add("GET", "/privacy", (request) =>
+      page.render(request, {
+        title: "Privacy",
+        current: "about",
+        children: <Markdown>{privacy}</Markdown>,
+      }),
+    )
+  }),
+)
+```
+
+Add `LegalPages` to `PageRoutes` in `server/pages.ts`, and a `sections.ts` entry if the page belongs in navigation. The component renders Markdown, including GFM tables, on the server with Astryx typography, and the page needs no island. Reach for MDX (`@mdx-js/rollup`) only when content must embed interactive components; that also means mapping its elements to Astryx and deciding how islands appear inside content.
+
 ## Verification
 
 From the root:
@@ -329,6 +367,16 @@ npm run build
 
 `check` includes formatting validation; `npm run format` writes changes. Inspect those changes rather than silently formatting unrelated work. Existing focused test boundaries are `packages/server/src/services.test.ts` and `packages/web/src/features/kanban/kanban.test.ts`. Add regression coverage for a concrete behavior or failure, not simply for a changed filename.
 
+For browser behavior, run the Playwright smoke suite against the build:
+
+```sh
+npx playwright install chromium   # once per machine
+npm run build
+npm run e2e
+```
+
+`e2e/smoke.e2e.ts` starts the production server on port 4331 with a fresh temporary database, then signs up the first (admin) account, saves a Kanban task across a reload, uploads, downloads, and deletes a file, and loads `/kanban` offline from the service worker. Steps share one browser session and run in order. Extend it when a change affects hydration, auth flow, or offline behavior.
+
 Iterate with `npm run dev` ([what it reloads](getting-started.md#clean-checkout)), but verify offline, service-worker, caching, and asset-preload behavior against the build: `npm run dev` serves source modules and no worker. For runtime changes, start the build with `npm run start` using suitable local environment settings. Check `/health/live`, `/health/ready`, and affected routes. For auth changes, exercise allowed/denied behavior; for browser changes, check hydration and relevant keyboard/offline/reconnect behavior. For data changes, use a disposable database and confirm restart persistence. Never run destructive checks against the only copy of real data.
 
-CI configuration in [verify.yml](../.github/workflows/verify.yml) runs frozen install, check, tests, and build on Ubuntu and Windows with Node 24.21.0. Its Linux production smoke checks health and `/login`; it does not establish SMTP delivery, proxy configuration, browser behavior, or remote deployment success. Inspect actual CI results before claiming a pass.
+CI configuration in [verify.yml](../.github/workflows/verify.yml) runs frozen install, check, tests, and build on Ubuntu and Windows with Node 24.21.0. Its Linux production smoke checks health and `/login`. Separate Ubuntu jobs run the Playwright suite in Chromium and build the Docker image, then check the container's readiness and `/login`. None of these establish SMTP delivery, S3 providers, proxy configuration, or remote deployment success. Inspect actual CI results before claiming a pass.

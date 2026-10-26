@@ -35,6 +35,11 @@ export const islandRegistry = registry({
     offline: false,
     load: () => import("../features/auth/LoginIsland.tsx").then((m) => m.loginIsland),
   },
+  files: {
+    source: "src/features/files/FilesIsland.tsx",
+    offline: false,
+    load: () => import("../features/files/FilesIsland.tsx").then((m) => m.filesIsland),
+  },
   "admin-panel": {
     source: "src/features/admin/panels.ts",
     offline: false,

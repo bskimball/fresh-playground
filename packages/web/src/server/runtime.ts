@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto"
-import { Config, Effect, Exit } from "effect"
-import { HttpEffect, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { Config, Effect, Exit, Layer, Option } from "effect"
+import {
+  FetchHttpClient,
+  HttpEffect,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http"
+import { Otlp, OtlpSerialization } from "effect/observability"
 
 const localOrigin = "http://local.invalid"
 
@@ -51,6 +58,38 @@ export const serverConfig = Config.all({
     "LOG_LEVEL",
   ).pipe(Config.withDefault("Info")),
 })
+
+/** `OTEL_EXPORTER_OTLP_HEADERS` format: `key=value` pairs, comma-separated, values URL-encoded. */
+const otlpHeaders = (value: string) =>
+  Object.fromEntries(
+    value
+      .split(",")
+      .map((pair) => pair.split("="))
+      .filter((parts): parts is [string, ...Array<string>] => parts.length >= 2 && parts[0] !== "")
+      .map(([key, ...rest]) => [key.trim(), decodeURIComponent(rest.join("=").trim())]),
+  )
+
+/**
+ * OTLP/HTTP JSON export of traces, metrics, and logs to
+ * `OTEL_EXPORTER_OTLP_ENDPOINT`. Without it, or with `OTEL_SDK_DISABLED=true`,
+ * nothing is exported.
+ */
+export const Telemetry = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* Config.all({
+      disabled: Config.Boolean("OTEL_SDK_DISABLED").pipe(Config.withDefault(false)),
+      endpoint: Config.NonEmptyString("OTEL_EXPORTER_OTLP_ENDPOINT").pipe(Config.option),
+      headers: Config.String("OTEL_EXPORTER_OTLP_HEADERS").pipe(Config.withDefault("")),
+      serviceName: Config.String("OTEL_SERVICE_NAME").pipe(Config.withDefault("fresh-playground")),
+    })
+    if (config.disabled || Option.isNone(config.endpoint)) return Layer.empty
+    return Otlp.layer({
+      baseUrl: config.endpoint.value,
+      resource: { serviceName: config.serviceName },
+      headers: otlpHeaders(config.headers),
+    })
+  }),
+).pipe(Layer.provide([OtlpSerialization.layerJson, FetchHttpClient.layer]), Layer.orDie)
 
 export const requestLogging = <E, R>(
   app: Effect.Effect<

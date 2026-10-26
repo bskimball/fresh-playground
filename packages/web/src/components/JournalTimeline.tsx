@@ -5,11 +5,17 @@ import { Icon, type IconName } from "./Icon.tsx"
 import { text } from "../styles/text.ts"
 import { colors, media } from "../styles/tokens.stylex.ts"
 
-const timeFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" })
+const timeFormat = new Intl.DateTimeFormat("en", {
+  dateStyle: "medium",
+  timeStyle: "short",
+})
 
 const resolveEntryTone = (
   entryText: string,
-): { readonly icon: IconName; readonly kind: "water" | "sun" | "night" | "leaf" } => {
+): {
+  readonly icon: IconName
+  readonly kind: "water" | "sun" | "night" | "leaf"
+} => {
   const lower = entryText.toLowerCase()
   if (lower.includes("water") || lower.includes("drink") || lower.includes("mist")) {
     return { icon: "drop", kind: "water" }
@@ -281,5 +287,13 @@ const styles = stylex.create({
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: colors.borderSubtle,
+  },
+  footer: {
+    display: "flex",
+    justifyContent: "center",
+  },
+  footerText: {
+    fontSize: 12,
+    color: colors.muted,
   },
 })

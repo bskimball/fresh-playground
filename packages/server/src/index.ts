@@ -9,8 +9,11 @@ import { Kanban, KanbanHandlers } from "./Kanban.ts"
 import { Mailer } from "./Mailer.ts"
 import { DatabasePath, Sqlite } from "./Sqlite.ts"
 import { Events, EventsHandlers } from "./Events.ts"
+import { Files, FilesHandlers } from "./Files.ts"
 import { Jobs } from "./Jobs.ts"
 import { MailQueue } from "./MailQueue.ts"
+import { RateLimits } from "./RateLimit.ts"
+import { Storage } from "./Storage.ts"
 
 export { Auth, AuthRoutes, webHeaders } from "./Auth.ts"
 export { Garden, type GardenStore, moistureAt } from "./Garden.ts"
@@ -20,6 +23,9 @@ export { Sqlite, DatabasePath } from "./Sqlite.ts"
 export { Events } from "./Events.ts"
 export { Jobs, JobsSql, JobsStore, PersistedQueue, runWorker } from "./Jobs.ts"
 export { MailQueue, MailJob } from "./MailQueue.ts"
+export { Files, FileRoutes } from "./Files.ts"
+export { Storage, StorageError } from "./Storage.ts"
+export { RateLimitMiddleware, RateLimits, rateLimits } from "./RateLimit.ts"
 
 const SystemHandlers = HttpApiBuilder.group(AppApi, "system", (handlers) =>
   Effect.succeed(
@@ -41,6 +47,8 @@ export const AppServices = Layer.mergeAll(
   Events.layer,
   Garden.layer,
   Kanban.layer,
+  Files.layer.pipe(Layer.provide(Storage.layer)),
+  RateLimits,
   Auth.layer.pipe(Layer.provide(MailQueue.layer), Layer.provide(Mailer.layer)),
 ).pipe(
   Layer.provide(Jobs),
@@ -67,6 +75,13 @@ export type AppRoutes = Layer.Layer<
 
 /** Mounts `AppApi` on the `HttpRouter`. */
 export const ApiRoutes: AppRoutes = HttpApiBuilder.layer(AppApi).pipe(
-  Layer.provide([GardenHandlers, KanbanHandlers, AdminHandlers, SystemHandlers, EventsHandlers]),
+  Layer.provide([
+    GardenHandlers,
+    KanbanHandlers,
+    AdminHandlers,
+    SystemHandlers,
+    EventsHandlers,
+    FilesHandlers,
+  ]),
   Layer.provide(AuthenticationLive),
 )

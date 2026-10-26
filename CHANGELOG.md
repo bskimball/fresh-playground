@@ -10,11 +10,17 @@ This project uses [Semantic Versioning](docs/releases.md#version-policy). The ro
 - Native Effect SQL-backed durable jobs in the same database file, with scoped workers, delayed offers, stable-ID deduplication, and bounded retries. No external broker or queue admin UI.
 - Durable magic-link mail enqueue and worker with expiry bounds and terminal secret scrubbing. Successful auth enqueue is not SMTP acceptance or inbox delivery; at-least-once processing can duplicate delivery.
 - Feature-extension and operational recipes covering layer registration, replay/reconnect, proxy streaming, queue inspection, and stopped-process backup/restore.
+- Per-user file uploads at `/files` with a typed multipart API, owner-only downloads that never render user HTML on the app origin, a 10 MB file and 100 MB per-user limit, and `Storage` backed by local disk or any S3-compatible bucket.
+- Per-client rate limits on `/api/*` using Effect's `RateLimiter`, plus the resolved client address passed to Better Auth, whose sign-in limits previously shared one bucket across all clients. `TRUST_PROXY` selects the forwarded address behind one reverse proxy.
+- Optional OTLP/HTTP export of traces, metrics, and logs when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- `Dockerfile` with a `/data` volume, a Playwright smoke suite (`npm run e2e`), and CI jobs for both.
+- Recipes for Markdown content pages and for replacing the SQLite layer.
 
 ### Limits
 
 - Single-process deployment remains required. Full `AppServices` needs a file-backed database; native Effect persistence APIs are unstable. No exactly-once, multi-instance consistency, strong collaboration, or idempotent offline-write guarantee is introduced.
 - Database/WAL/backups can contain pending mail secrets; scrubbing is not secure erasure. Failed auth payloads cannot be replayed after scrubbing: request a fresh link.
+- Rate-limit counts are process-local and reset on restart. Deleting a user does not delete their files. S3 storage was exercised against an emulator, not a live provider.
 
 The initial scope below is retained as historical context; the working changes above supersede its no-retries/no-durable-queue limitation.
 

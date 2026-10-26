@@ -1,12 +1,19 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { randomUUID } from "node:crypto"
+import { existsSync, mkdtempSync, readdirSync, rmSync, truncateSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createServer, type Socket } from "node:net"
 import { DatabaseSync } from "node:sqlite"
-import { EventsApi, GardenSaturated } from "@playground/contract"
+import { EventsApi, FILE_QUOTA_BYTES, GardenSaturated } from "@playground/contract"
 import { HttpApi, HttpApiBuilder } from "effect/http-api"
-import { HttpMiddleware, HttpRouter, HttpServer } from "effect/http"
-import { ConfigProvider, Effect, Exit, Layer, Schedule, Schema, Stream } from "effect"
+import {
+  HttpMiddleware,
+  HttpRouter,
+  HttpServer,
+  HttpServerResponse,
+  type Multipart,
+} from "effect/http"
+import { ConfigProvider, Effect, Exit, Layer, Option, Schedule, Schema, Stream } from "effect"
 import { describe, expect, it } from "vite-plus/test"
 import { Garden, moistureAt } from "./Garden.ts"
 import { Kanban, seedCards } from "./Kanban.ts"
@@ -16,7 +23,16 @@ import { Jobs, PersistedQueue, runWorker } from "./Jobs.ts"
 import { MailJob, MailQueue } from "./MailQueue.ts"
 import { Mailer } from "./Mailer.ts"
 import { Auth } from "./Auth.ts"
+import { Files } from "./Files.ts"
 import { AppServices } from "./index.ts"
+import {
+  clientKey,
+  RateLimitMiddleware,
+  rateLimitRule,
+  RateLimits,
+  rateLimits,
+} from "./RateLimit.ts"
+import { Storage } from "./Storage.ts"
 
 describe("email configuration and SMTP delivery", () => {
   const configured = (values: Record<string, string>) =>
@@ -819,5 +835,179 @@ describe("Sqlite.migrate and Events topic constraint migration", () => {
     } finally {
       db.close()
     }
+  })
+})
+
+describe("uploaded files", () => {
+  const withFiles = async (
+    run: (files: Files["Service"], root: string) => Effect.Effect<void, unknown>,
+  ) => {
+    const root = mkdtempSync(join(tmpdir(), "files-"))
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* run(yield* Files, join(root, "objects"))
+        }).pipe(
+          Effect.provide(Files.layer),
+          Effect.provide(Layer.succeed(Storage, Storage.local(join(root, "objects")))),
+          Effect.provide(Sqlite.memory),
+        ),
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+  const upload = (root: string, name: string, contentType: string, size: number) => {
+    const path = join(root, `${randomUUID()}.upload`)
+    writeFileSync(path, "")
+    truncateSync(path, size)
+    return {
+      _tag: "PersistedFile",
+      key: "file",
+      name,
+      contentType,
+      path,
+    } as Multipart.PersistedFile
+  }
+  const read = (body: ReadableStream<Uint8Array>) => new Response(body).text()
+
+  it("keeps files private to their owner and removes stored bytes on delete", async () => {
+    await withFiles((files, objects) =>
+      Effect.gen(function* () {
+        const stored = yield* files.upload("alice", upload(tmpdir(), "notes.txt", "text/plain", 5))
+        expect((yield* files.list("alice")).map((file) => file.id)).toEqual([stored.id])
+        expect(yield* files.list("bob")).toEqual([])
+        expect(Option.isNone(yield* files.open("bob", stored.id))).toBe(true)
+        expect(Exit.isFailure(yield* Effect.exit(files.remove("bob", stored.id)))).toBe(true)
+
+        const opened = yield* files.open("alice", stored.id)
+        expect(Option.isSome(opened) && opened.value.file.size).toBe(5)
+        if (Option.isSome(opened)) yield* Effect.promise(() => read(opened.value.body))
+
+        yield* files.remove("alice", stored.id)
+        expect(yield* files.list("alice")).toEqual([])
+        expect(existsSync(join(objects, stored.id))).toBe(false)
+      }),
+    )
+  })
+
+  it("normalizes names and media types from the client", async () => {
+    await withFiles((files) =>
+      Effect.gen(function* () {
+        const pdf = yield* files.upload(
+          "alice",
+          upload(
+            tmpdir(),
+            String.raw`C:\fakepath\re` + "\u0000port.pdf",
+            "Application/PDF; x=1",
+            1,
+          ),
+        )
+        expect(pdf.name).toBe("report.pdf")
+        expect(pdf.contentType).toBe("application/pdf")
+        const odd = yield* files.upload("alice", upload(tmpdir(), "   ", "text/html<script>", 1))
+        expect(odd.name).toBe("upload")
+        expect(odd.contentType).toBe("application/octet-stream")
+      }),
+    )
+  })
+
+  it("rejects uploads past the per-user quota and discards their bytes", async () => {
+    await withFiles((files, objects) =>
+      Effect.gen(function* () {
+        const tooBig = yield* Effect.exit(
+          files.upload("alice", upload(tmpdir(), "huge.bin", "", FILE_QUOTA_BYTES + 1)),
+        )
+        expect(Exit.isFailure(tooBig)).toBe(true)
+        yield* files.upload("alice", upload(tmpdir(), "small.bin", "", 10))
+        const overQuota = yield* Effect.exit(
+          files.upload("alice", upload(tmpdir(), "rest.bin", "", FILE_QUOTA_BYTES - 9)),
+        )
+        expect(Exit.isFailure(overQuota)).toBe(true)
+        expect((yield* files.list("alice")).map((file) => file.name)).toEqual(["small.bin"])
+        expect(readdirSync(objects)).toHaveLength(1)
+        // Quotas are per user.
+        yield* files.upload("bob", upload(tmpdir(), "bob.bin", "", FILE_QUOTA_BYTES - 9))
+      }),
+    )
+  })
+})
+
+describe("API rate limits", () => {
+  const handler = () =>
+    HttpRouter.toWebHandler(
+      Layer.mergeAll(
+        HttpRouter.use((router) =>
+          Effect.all([
+            router.add("POST", "/api/kanban", HttpServerResponse.empty({ status: 204 })),
+            router.add("POST", "/api/auth/sign-in", HttpServerResponse.empty({ status: 204 })),
+            router.add("GET", "/kanban", HttpServerResponse.empty({ status: 204 })),
+          ]),
+        ),
+        RateLimitMiddleware,
+      ).pipe(
+        Layer.provide(RateLimits),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({ TRUST_PROXY: "true" }))),
+        Layer.provideMerge(HttpServer.layerServices),
+      ),
+      { disableLogger: true },
+    )
+  const send = (
+    app: ReturnType<typeof handler>,
+    method: string,
+    path: string,
+    forwardedFor: string,
+  ) =>
+    app.handler(
+      new Request(`http://localhost${path}`, {
+        method,
+        headers: { "x-forwarded-for": forwardedFor },
+      }),
+    )
+
+  it("limits each client's API writes, leaving pages, auth, and other clients alone", async () => {
+    const app = handler()
+    try {
+      // The proxy appends the real client last; earlier entries are client-supplied.
+      for (let index = 0; index < rateLimits.write; index++) {
+        expect((await send(app, "POST", "/api/kanban", `9.9.9.${index}, 1.1.1.1`)).status).toBe(204)
+      }
+      const limited = await send(app, "POST", "/api/kanban", "1.1.1.1")
+      expect(limited.status).toBe(429)
+      expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0)
+      // The router matches these to /api/kanban too, so they share the exhausted bucket.
+      for (const alias of [
+        "/API/kanban",
+        "//api/kanban",
+        "/api/kanban/",
+        "/%61pi/kanban",
+        "/api/kanban;x",
+      ]) {
+        expect((await send(app, "POST", alias, "1.1.1.1")).status, alias).toBe(429)
+      }
+      expect((await send(app, "POST", "/api/kanban", "2.2.2.2")).status).toBe(204)
+      expect((await send(app, "GET", "/kanban", "1.1.1.1")).status).toBe(204)
+      expect((await send(app, "POST", "/api/auth/sign-in", "1.1.1.1")).status).toBe(204)
+    } finally {
+      await app.dispose()
+    }
+  })
+
+  it("classifies raw request targets the way the router matches them", () => {
+    // Request targets as Node delivers them; `new Request` would normalize these.
+    expect(rateLimitRule("POST", "http://localhost/api/kanban;/../../outside")).toBe("write")
+    expect(rateLimitRule("POST", "/api/kanban/../../outside")).toBe("write")
+    expect(rateLimitRule("GET", "http://localhost//API/Events/")).toBe("events")
+    expect(rateLimitRule("GET", "/api/kanban?x=1")).toBe("read")
+    expect(rateLimitRule("POST", "/API/AUTH/sign-in/email")).toBeUndefined()
+    expect(rateLimitRule("GET", "/kanban")).toBeUndefined()
+  })
+
+  it("groups IPv6 clients by /64 and unwraps IPv4-mapped addresses", () => {
+    expect(clientKey("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64")
+    expect(clientKey("2001:db8:1:2:bbbb::2%eth0")).toBe("2001:db8:1:2::/64")
+    expect(clientKey("::1")).toBe("0:0:0:0::/64")
+    expect(clientKey("::ffff:10.0.0.7")).toBe("10.0.0.7")
+    expect(clientKey("not an address")).toBe("unknown")
   })
 })

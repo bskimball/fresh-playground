@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 import { AdminApi } from "./Admin.ts"
 import { EventsApi } from "./Events.ts"
+import { FilesApi } from "./Files.ts"
 import { GardenApi } from "./Garden.ts"
 import { KanbanApi } from "./Kanban.ts"
 
@@ -19,4 +20,5 @@ export class AppApi extends HttpApi.make("app")
   .add(KanbanApi)
   .add(AdminApi)
   .add(SystemApi)
-  .add(EventsApi) {}
+  .add(EventsApi)
+  .add(FilesApi) {}

@@ -8,7 +8,11 @@ import { Config, Context, Effect, Layer, Option, Redacted } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { MailQueue } from "./MailQueue.ts"
 import { Mailer } from "./Mailer.ts"
+import { clientAddress, trustProxyConfig } from "./RateLimit.ts"
 import { Sqlite } from "./Sqlite.ts"
+
+/** Set by `AuthRoutes` from the resolved client address, replacing any client-sent value. */
+const clientIpHeader = "x-playground-client-ip"
 
 const authConfig = Config.all({
   environment: Config.Literals(["development", "test", "production"], "NODE_ENV").pipe(
@@ -48,6 +52,8 @@ const authOptions = (options: {
     emailAndPassword: { enabled: options.methods.password },
     socialProviders: options.socialProviders,
     disabledPaths: options.methods.magicLink ? [] : ["/sign-in/magic-link", "/magic-link/verify"],
+    // Web requests carry no socket address; without this, rate limits share one bucket.
+    advanced: { ipAddress: { ipAddressHeaders: [clientIpHeader] } },
     databaseHooks: {
       user: {
         create: {
@@ -207,9 +213,13 @@ export const webHeaders = (request: HttpServerRequest.HttpServerRequest) =>
 export const AuthRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const auth = yield* Auth
+    const trustProxy = yield* trustProxyConfig
     yield* router.add("*", "/api/auth/*", (request) =>
       HttpServerRequest.toWeb(request).pipe(
-        Effect.flatMap((web) => Effect.promise(() => auth.handler(web))),
+        Effect.flatMap((web) => {
+          web.headers.set(clientIpHeader, clientAddress(request, trustProxy))
+          return Effect.promise(() => auth.handler(web))
+        }),
         Effect.map(HttpServerResponse.fromWeb),
       ),
     )

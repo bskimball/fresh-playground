@@ -6,6 +6,7 @@ import { NotFound } from "../components/Shell.tsx"
 import { AboutPages } from "../features/about/routes.tsx"
 import { AdminPages } from "../features/admin/routes.tsx"
 import { AuthPages } from "../features/auth/routes.tsx"
+import { FilesPages } from "../features/files/routes.tsx"
 import { KanbanPages } from "../features/kanban/routes.tsx"
 import { GardenPages } from "../features/terrarium/routes.tsx"
 import { type Assets, Page } from "./Page.ts"
@@ -27,6 +28,12 @@ const NotFoundPage = HttpRouter.use(
 
 /** Every feature's pages. Each feature owns its routes in `features/<feature>/routes.tsx`. */
 export const PageRoutes = (assets: Assets): AppRoutes =>
-  Layer.mergeAll(GardenPages, KanbanPages, AboutPages, AuthPages, AdminPages, NotFoundPage).pipe(
-    Layer.provide(Page.layer(assets)),
-  )
+  Layer.mergeAll(
+    GardenPages,
+    KanbanPages,
+    AboutPages,
+    AuthPages,
+    AdminPages,
+    FilesPages,
+    NotFoundPage,
+  ).pipe(Layer.provide(Page.layer(assets)))

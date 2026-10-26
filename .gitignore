@@ -8,3 +8,5 @@ data/
 .env.*
 !.env.example
 .astro/
+test-results/
+playwright-report/

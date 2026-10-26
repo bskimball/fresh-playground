@@ -1,4 +1,11 @@
-import { ApiRoutes, AppServices, AuthRoutes, Garden } from "@playground/server"
+import {
+  ApiRoutes,
+  AppServices,
+  AuthRoutes,
+  FileRoutes,
+  Garden,
+  RateLimitMiddleware,
+} from "@playground/server"
 import { Effect, Layer } from "effect"
 import { HttpMiddleware, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import type { Assets } from "./Page.ts"
@@ -78,10 +85,12 @@ export const App = <E, R>(assets: {
   Layer.mergeAll(
     ApiRoutes,
     AuthRoutes,
+    FileRoutes,
     PerformanceRoutes,
     PageRoutes(assets.pages),
     assets.routes,
     Health,
+    RateLimitMiddleware,
     Compression,
     Revalidation,
     PrefetchInvalidation,
